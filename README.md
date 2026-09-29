@@ -69,9 +69,9 @@ Prerequisites:
 
 ```bash
 npx wrangler login
-npx wrangler d1 create abn-teacher-portal-db        # copy the database_id into wrangler.jsonc
-npm run db:migrate:remote
-node scripts/create-admin.mjs --remote --its <your ITS> --name "M <Your Name>"
+# The live database already exists (abn-teacher-portal-db, id in wrangler.jsonc)
+# and has all tables. For future schema changes: npm run db:migrate:remote
+node scripts/create-admin.mjs --remote --its <your ITS> --name "M <Your Name>"   # once
 npx wrangler deploy                                 # attaches the raajsoftware.com/abn routes
 ```
 

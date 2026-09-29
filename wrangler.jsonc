@@ -28,10 +28,8 @@
     {
       "binding": "DB",
       "database_name": "abn-teacher-portal-db",
-      // Local dev works with this placeholder. Before deploying, run
-      //   npx wrangler d1 create abn-teacher-portal-db
-      // and paste the returned database_id here.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Live database (APAC), created 2026-09-30 with migrations 0001–0002 applied.
+      "database_id": "381b85ca-6250-4c0a-8cfb-62dd0126c315",
       "migrations_dir": "migrations"
     }
   ],
