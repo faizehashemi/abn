@@ -1,0 +1,17 @@
+# Copy to .dev.vars for local development (never commit .dev.vars).
+# In production set these with:  npx wrangler secret put SMTP_PASS   (etc.)
+#
+# Email delivery — pick ONE. With neither set, emails are only written to the
+# Email Log page in the admin panel (handy for local testing).
+
+# Option A: SMTP (Gmail / Google Workspace / Zoho / any SMTP server)
+# SMTP_HOST=smtp.gmail.com
+# SMTP_PORT=587
+# SMTP_SECURE=false        # true for port 465
+# SMTP_USER=you@example.com
+# SMTP_PASS=app-password
+# MAIL_FROM=you@example.com
+
+# Option B: Resend HTTP API (https://resend.com)
+# RESEND_API_KEY=re_xxx
+# MAIL_FROM=portal@yourdomain.com

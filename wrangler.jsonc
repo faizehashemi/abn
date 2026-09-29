@@ -1,0 +1,49 @@
+// Cloudflare configuration for the ABN Teacher Portal.
+//
+// Everything here is deliberately namespaced "abn-teacher-portal-*" so it lives
+// completely apart from other projects on the same Cloudflare account
+// (e.g. miqaat48): its own Worker, its own D1 database, its own R2 bucket,
+// its own secrets. Nothing is shared.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "abn-teacher-portal",
+  "main": "src/index.tsx",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Static files (logo, CSS, JS) served straight from Cloudflare's edge.
+  "assets": { "directory": "./public" },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "abn-teacher-portal-db",
+      // Local dev works with this placeholder. Before deploying, run
+      //   npx wrangler d1 create abn-teacher-portal-db
+      // and paste the returned database_id here.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      // Before deploying: npx wrangler r2 bucket create abn-teacher-portal-photos
+      "bucket_name": "abn-teacher-portal-photos"
+    }
+  ],
+
+  "vars": {
+    "APP_NAME": "ABN Teacher Portal",
+    "APP_URL": "http://localhost:8787",
+    "TIMEZONE": "Asia/Kolkata",
+    "MAIL_FROM": "",
+    "MAIL_FROM_NAME": "ABN Teacher Portal"
+  },
+
+  // Daily clean-up of expired login sessions (02:00 IST).
+  "triggers": { "crons": ["30 20 * * *"] },
+
+  "observability": { "enabled": true }
+}
