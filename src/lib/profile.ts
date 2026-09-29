@@ -4,7 +4,9 @@ import { EMAIL_RE, ITS_RE, isISODate, str } from './util'
 import { randomToken } from './crypto'
 
 const PHOTO_TYPES: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
-const MAX_PHOTO = 3 * 1024 * 1024
+// The browser shrinks photos to ~50 KB before upload (public/abn/app.js); this cap
+// only matters when JavaScript is off. D1 rows must stay well under 2 MB.
+const MAX_PHOTO = 1024 * 1024
 
 /**
  * Validates a submitted profile form and writes it. Returns a list of errors
@@ -49,7 +51,7 @@ export async function saveProfile(env: Env, user: User, body: Record<string, str
   const hasPhoto = photo instanceof File && photo.size > 0
   if (hasPhoto) {
     if (!PHOTO_TYPES[photo.type]) errors.push('Photo must be a JPG, PNG or WebP image.')
-    else if (photo.size > MAX_PHOTO) errors.push('Photo must be 3 MB or smaller.')
+    else if (photo.size > MAX_PHOTO) errors.push('Photo must be 1 MB or smaller.')
   } else if (mode === 'complete' && !user.photo_key) {
     errors.push('Please upload your photo.')
   }
@@ -57,10 +59,11 @@ export async function saveProfile(env: Env, user: User, body: Record<string, str
   if (errors.length) return errors
 
   if (hasPhoto) {
-    const key = `photos/${user.id}/${randomToken(8)}.${PHOTO_TYPES[photo.type]}`
-    await env.PHOTOS.put(key, await photo.arrayBuffer(), { httpMetadata: { contentType: photo.type } })
-    if (user.photo_key) await env.PHOTOS.delete(user.photo_key)
-    fields.photo_key = key
+    await env.DB.prepare(
+      `INSERT INTO photos (user_id, content_type, data) VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET content_type = excluded.content_type, data = excluded.data, updated_at = datetime('now')`,
+    ).bind(user.id, photo.type, await photo.arrayBuffer()).run()
+    fields.photo_key = randomToken(8) // version tag for cache-busting
   }
   if (mode === 'complete') fields.profile_complete = 1
 

@@ -1,6 +1,5 @@
 export type Env = {
   DB: D1Database
-  PHOTOS: R2Bucket
   ASSETS: Fetcher
   APP_NAME: string
   APP_URL: string

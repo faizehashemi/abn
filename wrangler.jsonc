@@ -2,7 +2,7 @@
 //
 // Everything here is deliberately namespaced "abn-teacher-portal-*" so it lives
 // completely apart from other projects on the same Cloudflare account
-// (e.g. miqaat48): its own Worker, its own D1 database, its own R2 bucket,
+// (e.g. miqaat48): its own Worker, its own D1 database (photos included),
 // its own secrets. Nothing is shared.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -36,13 +36,6 @@
     }
   ],
 
-  "r2_buckets": [
-    {
-      "binding": "PHOTOS",
-      // Before deploying: npx wrangler r2 bucket create abn-teacher-portal-photos
-      "bucket_name": "abn-teacher-portal-photos"
-    }
-  ],
 
   "vars": {
     "APP_NAME": "ABN Teacher Portal",

@@ -128,7 +128,7 @@ export function ProfileForm(props: { user: User; sections: Section[]; mode: Prof
         <label>
           Photo {props.mode === 'complete' && !u.photo_key ? <span class="req">*</span> : null}
           <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required={props.mode === 'complete' && !u.photo_key} />
-          <span class="hint">JPG / PNG / WebP, up to 3 MB. A clear passport-style photo.</span>
+          <span class="hint">JPG / PNG / WebP. A clear passport-style photo — it is resized automatically.</span>
         </label>
       </div>
 

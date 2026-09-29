@@ -447,18 +447,18 @@ app.post('/settings/password', async (c) => {
   return back(c, '/settings', 'ok', 'Password updated.')
 })
 
-// ---------- photos (served from R2, login required) ----------
+// ---------- photos (stored in D1, login required) ----------
 
 app.get('/photo/:id', async (c) => {
   const viewer = c.get('user')
   const target = await getUserById(c.env, Number(c.req.param('id')))
   // Everyone may see leaderboard avatars; full records are guarded elsewhere.
   if (!target?.photo_key || !viewer) return c.notFound()
-  const obj = await c.env.PHOTOS.get(target.photo_key)
-  if (!obj) return c.notFound()
-  return new Response(obj.body, {
+  const row = await c.env.DB.prepare('SELECT content_type, data FROM photos WHERE user_id = ?').bind(target.id).first<{ content_type: string; data: number[] | ArrayBuffer }>()
+  if (!row) return c.notFound()
+  return new Response(new Uint8Array(row.data as ArrayBuffer), {
     headers: {
-      'Content-Type': obj.httpMetadata?.contentType ?? 'image/jpeg',
+      'Content-Type': row.content_type,
       'Cache-Control': 'private, max-age=3600',
     },
   })

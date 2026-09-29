@@ -2,7 +2,7 @@
 
 Teacher management portal for **Ammar Baughe Nounehaal Higher Secondary School, Indore**. It replaces WhatsApp groups and Google Sheets for staff onboarding, profiles, merit and demerit scoring, the leaderboard, attendance and announcements.
 
-Built on Cloudflare Workers + D1 (SQLite) + R2 (photos), using [Hono](https://hono.dev) with pages rendered on the server. There is no frontend build step.
+Built on Cloudflare Workers + D1 (SQLite, which also stores photos), using [Hono](https://hono.dev) with pages rendered on the server. There is no frontend build step.
 
 ---
 
@@ -61,17 +61,15 @@ To reset local data: `rm -rf .wrangler/state`, then run the setup again.
 
 ## Deploy to Cloudflare at raajsoftware.com/abn
 
-Everything uses its own names (`abn-teacher-portal`, `abn-teacher-portal-db`, `abn-teacher-portal-photos`). It shares **no** Worker, database, bucket or secret with other projects on the account. The Worker only receives requests for `raajsoftware.com/abn` and `raajsoftware.com/abn/*`. The rest of raajsoftware.com is untouched.
+Everything uses its own names (`abn-teacher-portal`, `abn-teacher-portal-db`). It shares **no** Worker, database or secret with other projects on the account. The Worker only receives requests for `raajsoftware.com/abn` and `raajsoftware.com/abn/*`. The rest of raajsoftware.com is untouched.
 
 Prerequisites:
 - `raajsoftware.com` is an active zone on the same Cloudflare account.
 - A **proxied** (orange-cloud) DNS record exists for `raajsoftware.com`. If nothing is hosted at the root yet, add `AAAA @ 100::` (proxied).
-- R2 is enabled on the account (Dashboard → R2, one-time).
 
 ```bash
 npx wrangler login
 npx wrangler d1 create abn-teacher-portal-db        # copy the database_id into wrangler.jsonc
-npx wrangler r2 bucket create abn-teacher-portal-photos
 npm run db:migrate:remote
 node scripts/create-admin.mjs --remote --its <your ITS> --name "M <Your Name>"
 npx wrangler deploy                                 # attaches the raajsoftware.com/abn routes
@@ -108,5 +106,5 @@ scripts/                     create-admin, seed-demo, e2e smoke test
 
 - Passwords are hashed with PBKDF2-SHA256 and a random salt. Sessions are random tokens, stored hashed, in HttpOnly SameSite cookies.
 - Cross-site form posts are rejected. Every page checks the viewer's role and section on the server.
-- Photos live in a private R2 bucket and are only served to logged-in users.
+- Photos are resized in the browser (max 480 px, ~50 KB), stored in D1, and only served to logged-in users. R2 is not needed.
 - Because the default password is guessable (the first name), teachers see a reminder until they change it.
