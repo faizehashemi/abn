@@ -1,0 +1,36 @@
+// Raaj Software company website — https://raajsoftware.com
+//
+// Its own Worker and D1 database, separate from the ABN Teacher Portal.
+// Routing: this Worker takes raajsoftware.com/*, while the portal's more specific
+// routes (raajsoftware.com/abn and /abn/*) win for the /abn path.
+//
+// Deploy from the repository root:  npx wrangler deploy --config site/wrangler.jsonc
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "raaj-site",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+
+  "routes": [
+    { "pattern": "raajsoftware.com/*", "zone_name": "raajsoftware.com" }
+  ],
+  "workers_dev": false,
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "raaj-site-db",
+      // Live database (APAC), created 2026-09-30 with 0001_subscribers applied.
+      "database_id": "d436623e-2c53-4e5e-898a-92383069e5c7",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "observability": { "enabled": true }
+}
