@@ -48,9 +48,24 @@ export async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** Default password = first name, lowercase, letters only. "Mohammed Ali" -> "mohammed". */
+// Honorifics / initials that come before the given name, e.g. "M Huzaifa Master".
+// Keep in sync with scripts/names.mjs.
+const PREFIXES = new Set(['m', 'mulla', 'mullah', 'shk', 'sh', 'shaikh', 'sheikh', 'mr', 'mrs', 'ms', 'dr', 'janab', 'bhai', 'bu'])
+
+/** Name words without leading honorifics/initials: "M Huzaifa Master" -> ["Huzaifa", "Master"]. */
+export function nameWords(fullName: string): string[] {
+  const words = fullName.trim().split(/\s+/).filter(Boolean)
+  let i = 0
+  while (i < words.length - 1) {
+    const w = words[i].toLowerCase().replace(/[^a-z]/g, '')
+    if (w.length <= 1 || PREFIXES.has(w)) i++
+    else break
+  }
+  return words.slice(i)
+}
+
+/** Default password = given name, lowercase, letters only. "M Huzaifa Master" -> "huzaifa". */
 export function defaultPassword(fullName: string, its: string): string {
-  const first = fullName.trim().split(/\s+/)[0] ?? ''
-  const clean = first.toLowerCase().replace(/[^a-z]/g, '')
+  const clean = (nameWords(fullName)[0] ?? '').toLowerCase().replace(/[^a-z]/g, '')
   return clean || its
 }

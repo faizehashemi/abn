@@ -11,7 +11,17 @@
   "compatibility_date": "2025-09-01",
   "compatibility_flags": ["nodejs_compat"],
 
+  // Served at https://raajsoftware.com/abn — only these paths reach this Worker;
+  // the rest of raajsoftware.com is untouched. Requires raajsoftware.com to be an
+  // active zone on this Cloudflare account.
+  "routes": [
+    { "pattern": "raajsoftware.com/abn", "zone_name": "raajsoftware.com" },
+    { "pattern": "raajsoftware.com/abn/*", "zone_name": "raajsoftware.com" }
+  ],
+  "workers_dev": false,
+
   // Static files (logo, CSS, JS) served straight from Cloudflare's edge.
+  // They live in public/abn/ so their URLs are /abn/styles.css etc.
   "assets": { "directory": "./public" },
 
   "d1_databases": [
@@ -36,7 +46,8 @@
 
   "vars": {
     "APP_NAME": "ABN Teacher Portal",
-    "APP_URL": "http://localhost:8787",
+    "APP_URL": "https://raajsoftware.com/abn",
+    "BASE_PATH": "/abn",
     "TIMEZONE": "Asia/Kolkata",
     "MAIL_FROM": "",
     "MAIL_FROM_NAME": "ABN Teacher Portal"

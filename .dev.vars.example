@@ -1,6 +1,9 @@
 # Copy to .dev.vars for local development (never commit .dev.vars).
 # In production set these with:  npx wrangler secret put SMTP_PASS   (etc.)
-#
+
+# Links inside emails sent while testing locally
+APP_URL=http://localhost:8787/abn
+
 # Email delivery — pick ONE. With neither set, emails are only written to the
 # Email Log page in the admin panel (handy for local testing).
 

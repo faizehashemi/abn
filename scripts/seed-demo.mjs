@@ -4,15 +4,16 @@
 //
 //   npm run seed:demo
 //
-// Demo logins (password = first name):
-//   Section Head (Primary):   10000001 / fatema
-//   Section Head (Secondary): 10000002 / hussain   (has attendance rights for own section)
-//   Teacher:                  10000003 / ahmed
+// Demo logins (password = first name, "M" prefix skipped):
+//   Section Head (Primary):   10000001 / huzaifa   (M Huzaifa Master)
+//   Section Head (Secondary): 10000002 / taha      (M Taha Kamlapur, has attendance rights for own section)
+//   Teacher:                  10000003 / mustafa   (M Mustafa Kapadia)
 import { execFileSync } from 'node:child_process'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { webcrypto as crypto } from 'node:crypto'
+import { defaultPassword } from './names.mjs'
 
 async function hash(pw) {
   const salt = crypto.getRandomValues(new Uint8Array(16))
@@ -24,28 +25,28 @@ const q = (s) => (s == null ? 'NULL' : `'${String(s).replace(/'/g, "''")}'`)
 
 const sections = ['Primary', 'Secondary', 'Higher Secondary', 'Administration']
 const people = [
-  ['10000001', 'Fatema Saifuddin', 1, 'head', 'none'],
-  ['10000002', 'Hussain Burhanuddin', 2, 'head', 'section'],
-  ['10000003', 'Ahmed Ali Shaikh', 1, 'teacher'],
-  ['10000004', 'Zainab Taher', 1, 'teacher'],
-  ['10000005', 'Mustafa Kapadia', 2, 'teacher'],
-  ['10000006', 'Sakina Lokhandwala', 2, 'teacher'],
-  ['10000007', 'Murtaza Rangwala', 3, 'teacher'],
-  ['10000008', 'Arwa Jamali', 3, 'teacher'],
-  ['10000009', 'Taha Bohra', 4, 'teacher'],
-  ['10000010', 'Insiya Hakimuddin', 2, 'teacher'],
+  ['10000001', 'M Huzaifa Master', 1, 'head', 'none'],
+  ['10000002', 'M Taha Kamlapur', 2, 'head', 'section'],
+  ['10000003', 'M Mustafa Kapadia', 1, 'teacher'],
+  ['10000004', 'M Murtaza Rangwala', 1, 'teacher'],
+  ['10000005', 'M Hussain Lokhandwala', 2, 'teacher'],
+  ['10000006', 'M Qaidjohar Jamali', 2, 'teacher'],
+  ['10000007', 'M Burhanuddin Poonawala', 3, 'teacher'],
+  ['10000008', 'M Aliasgar Saifee', 3, 'teacher'],
+  ['10000009', 'M Moiz Hakimuddin', 4, 'teacher'],
+  ['10000010', 'M Yusuf Ezzi', 2, 'teacher'],
 ]
-const pending = [['10000011', 'Yusuf Ezzi', 1], ['10000012', 'Rashida Poonawala', null]]
+const pending = [['10000011', 'M Shabbir Bohra', 1], ['10000012', 'M Juzer Taher', null]]
 
 const lines = []
 sections.forEach((s, i) => lines.push(`INSERT OR IGNORE INTO sections (id, name) VALUES (${i + 1}, ${q(s)});`))
 for (const [its, name, sec, role, scope = 'none'] of people) {
-  const pw = name.split(' ')[0].toLowerCase()
+  const pw = defaultPassword(name)
   lines.push(`INSERT OR IGNORE INTO users (its, full_name, password_hash, role, status, section_id, attendance_scope, consent_at, profile_complete, phone, email, date_of_joining, qualification, designation, subjects, address, approved_at)
 VALUES (${q(its)}, ${q(name)}, ${q(await hash(pw))}, ${q(role)}, 'active', ${sec}, ${q(scope)}, datetime('now'), 1, '98260${its.slice(-5)}', ${q(pw + '@example.com')}, '2019-06-1${its.slice(-1)}', 'M.A. B.Ed.', ${q(role === 'head' ? 'Section Head' : 'Teacher')}, 'English', 'Saifee Nagar, Indore', datetime('now'));`)
 }
 for (const [its, name, sec] of pending) {
-  lines.push(`INSERT OR IGNORE INTO users (its, full_name, password_hash, status, section_id) VALUES (${q(its)}, ${q(name)}, ${q(await hash(name.split(' ')[0].toLowerCase()))}, 'pending', ${sec ?? 'NULL'});`)
+  lines.push(`INSERT OR IGNORE INTO users (its, full_name, password_hash, status, section_id) VALUES (${q(its)}, ${q(name)}, ${q(await hash(defaultPassword(name)))}, 'pending', ${sec ?? 'NULL'});`)
 }
 
 const coord = `(SELECT id FROM users WHERE role = 'coordinator' ORDER BY id LIMIT 1)`
@@ -83,4 +84,4 @@ const dir = mkdtempSync(join(tmpdir(), 'abn-seed-'))
 const file = join(dir, 'seed.sql')
 writeFileSync(file, lines.join('\n'))
 execFileSync('npx', ['wrangler', 'd1', 'execute', 'abn-teacher-portal-db', '--local', '--file', file], { stdio: 'inherit' })
-console.log('\n✔ Demo data loaded. Try 10000001 / fatema (Section Head) or 10000003 / ahmed (Teacher).')
+console.log('\n✔ Demo data loaded. Try 10000001 / huzaifa (Section Head) or 10000003 / mustafa (Teacher).')

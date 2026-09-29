@@ -5,6 +5,7 @@ import type { AppEnv, User } from '../types'
 import { takeFlash, type Flash } from '../lib/util'
 import { pendingCounts } from '../lib/queries'
 import { attendanceScope } from '../lib/auth'
+import { nameWords } from '../lib/crypto'
 
 type NavItem = { href: string; label: string; badge?: number }
 
@@ -148,7 +149,7 @@ export function PageHead(props: { title: string; sub?: Child; actions?: Child })
 
 export function Avatar(props: { id: number; name: string; photo: string | null; size?: number }) {
   const size = props.size ?? 36
-  const initials = props.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('')
+  const initials = nameWords(props.name).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('')
   return props.photo ? (
     <img class="avatar" src={`/photo/${props.id}`} alt="" width={size} height={size} style={`width:${size}px;height:${size}px`} loading="lazy" />
   ) : (

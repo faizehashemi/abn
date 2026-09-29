@@ -4,6 +4,8 @@ export type Env = {
   ASSETS: Fetcher
   APP_NAME: string
   APP_URL: string
+  /** URL prefix the app is served under, e.g. "/abn" for raajsoftware.com/abn. Empty = domain root. */
+  BASE_PATH?: string
   TIMEZONE: string
   MAIL_FROM?: string
   MAIL_FROM_NAME?: string

@@ -18,7 +18,7 @@ Built on Cloudflare Workers + D1 (SQLite) + R2 (photos), using [Hono](https://ho
 
 1. **Join.** A new teacher clicks *Join as Teacher* and enters their 8-digit ITS number, full name and (optionally) section. The request shows as **Pending Approval**.
 2. **Approve.** The Coordinator approves it (choosing section and role) under *Approvals*. Teachers can also be added directly or bulk-imported by CSV under *Teachers → Add teachers*.
-3. **Login.** The login ID is the **ITS number** and the default password is the **first name in lowercase** (e.g. `ahmed`). Default passwords are case-insensitive. Users change their password in *Settings*, and the Coordinator can reset it to the default.
+3. **Login.** The login ID is the **ITS number** and the default password is the **first name in lowercase**, skipping prefixes like M / Mulla / Shk (*M Huzaifa Master* → `huzaifa`, *M Taha Kamlapur* → `taha`). Default passwords are case-insensitive. Users change their password in *Settings*, and the Coordinator can reset it to the default.
 4. **Consent.** On first login the teacher sees the Organization Policies and must click *I Agree & Give Consent*. The Coordinator edits the text under *Policies* and can require everyone to consent again.
 5. **Profile.** Mandatory fields are: photo, contact number, email, section, date of joining, qualification and address. Designation and subjects are optional. Only after this is the teacher on the leaderboard.
 6. **Merit / Demerit.** A Section Head picks a teacher and submits *+ Merit* or *− Demerit* (points, date, reason). The Coordinator sees "Section Head X wants to give +5 Merit to Teacher Y for …" and approves or rejects it. **Final Score = approved merits − approved demerits.** An entry the Coordinator adds directly is approved immediately. The teacher gets an email when points are approved.
@@ -35,9 +35,9 @@ Requires Node 18+.
 ```bash
 npm install
 npm run db:migrate:local                          # create tables in a local SQLite DB
-node scripts/create-admin.mjs --local --its 12345678 --name "Your Full Name"
+node scripts/create-admin.mjs --local --its 12345678 --name "M Your Name"
 npm run seed:demo                                 # optional: demo sections, teachers, points, attendance
-npm run dev                                       # http://localhost:8787
+npm run dev                                       # http://localhost:8787/abn
 ```
 
 Demo logins (after `seed:demo`), password = first name:
@@ -45,11 +45,11 @@ Demo logins (after `seed:demo`), password = first name:
 | ITS | Password | Role |
 |---|---|---|
 | 12345678 | *(first name you gave)* | Main Coordinator |
-| 10000001 | `fatema` | Section Head (Primary) |
-| 10000002 | `hussain` | Section Head (Secondary), with attendance rights |
-| 10000003 | `ahmed` | Teacher |
+| 10000001 | `huzaifa` | M Huzaifa Master: Section Head (Primary) |
+| 10000002 | `taha` | M Taha Kamlapur: Section Head (Secondary), with attendance rights |
+| 10000003 | `mustafa` | M Mustafa Kapadia: Teacher |
 
-End-to-end smoke test (with `npm run dev` running on a freshly seeded DB, coordinator `12345678` named "Main …"):
+End-to-end smoke test (with `npm run dev` running on a freshly seeded DB, coordinator `12345678` named "M Main …"):
 
 ```bash
 node scripts/e2e.mjs
@@ -59,22 +59,25 @@ To reset local data: `rm -rf .wrangler/state`, then run the setup again.
 
 ---
 
-## Deploy to Cloudflare (kept separate from miqaat48)
+## Deploy to Cloudflare at raajsoftware.com/abn
 
-Everything uses its own names (`abn-teacher-portal`, `abn-teacher-portal-db`, `abn-teacher-portal-photos`). It shares **no** Worker, database, bucket or secret with other projects on the same account.
+Everything uses its own names (`abn-teacher-portal`, `abn-teacher-portal-db`, `abn-teacher-portal-photos`). It shares **no** Worker, database, bucket or secret with other projects on the account. The Worker only receives requests for `raajsoftware.com/abn` and `raajsoftware.com/abn/*`. The rest of raajsoftware.com is untouched.
+
+Prerequisites:
+- `raajsoftware.com` is an active zone on the same Cloudflare account.
+- A **proxied** (orange-cloud) DNS record exists for `raajsoftware.com`. If nothing is hosted at the root yet, add `AAAA @ 100::` (proxied).
+- R2 is enabled on the account (Dashboard → R2, one-time).
 
 ```bash
-npx wrangler login                                  # same Cloudflare account
+npx wrangler login
 npx wrangler d1 create abn-teacher-portal-db        # copy the database_id into wrangler.jsonc
 npx wrangler r2 bucket create abn-teacher-portal-photos
 npm run db:migrate:remote
-node scripts/create-admin.mjs --remote --its <your ITS> --name "<Your Name>"
-npx wrangler deploy                                 # → https://abn-teacher-portal.<subdomain>.workers.dev
+node scripts/create-admin.mjs --remote --its <your ITS> --name "M <Your Name>"
+npx wrangler deploy                                 # attaches the raajsoftware.com/abn routes
 ```
 
-For stricter separation, create an **API token** limited to this project's resources and deploy with `CLOUDFLARE_API_TOKEN=… npx wrangler deploy`.
-
-**Custom domain later:** in the Cloudflare dashboard go to *Workers & Pages → abn-teacher-portal → Settings → Domains & Routes → Add custom domain* (e.g. `portal.yourdomain.com`). Then update `APP_URL` in `wrangler.jsonc` (it's used in email links) and redeploy.
+The sub-path is controlled by `BASE_PATH` (`/abn`) and `APP_URL` in `wrangler.jsonc`. Static files live in `public/abn/`. To move the portal to a different path or its own subdomain, change those two values, rename that folder and update `routes`.
 
 ## Email
 

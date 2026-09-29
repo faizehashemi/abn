@@ -265,7 +265,7 @@ app.get('/teachers/new', async (c) => {
           <form method="post" action="/admin/teachers/import" enctype="multipart/form-data" class="stack">
             <label>CSV file<input type="file" name="file" accept=".csv,text/csv" /></label>
             <label>…or paste rows
-              <textarea name="text" rows={7} placeholder={'30412345,Ahmed Ali Shaikh,Primary,teacher\n30498765,Fatema Hussain,Secondary,head'}></textarea>
+              <textarea name="text" rows={7} placeholder={'30412345,M Huzaifa Master,Primary,teacher\n30498765,M Taha Kamlapur,Secondary,head'}></textarea>
             </label>
             <button class="btn btn-primary">Import</button>
           </form>

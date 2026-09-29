@@ -45,7 +45,7 @@ function LoginForm(props: { its?: string; error?: string; info?: string }) {
           Password
           <input name="password" type="password" required autocomplete="current-password" />
         </label>
-        <p class="hint">First login? Your password is your <b>first name</b> in lowercase (e.g. <code>ahmed</code>).</p>
+        <p class="hint">First login? Your password is your <b>first name</b> in lowercase — for <i>M Huzaifa Master</i> it is <code>huzaifa</code>.</p>
         <button class="btn btn-primary btn-block" type="submit">Log in</button>
       </form>
       <div class="auth-alt">
@@ -69,7 +69,7 @@ app.post('/login', async (c) => {
   let ok = false
   if (user) {
     ok = await verifyPassword(password, user.password_hash)
-    // Default passwords are case-insensitive so "Ahmed" works as well as "ahmed".
+    // Default passwords are case-insensitive so "Huzaifa" works as well as "huzaifa".
     if (!ok && user.using_default_password && password !== password.toLowerCase()) {
       ok = await verifyPassword(password.toLowerCase(), user.password_hash)
     }
@@ -111,7 +111,7 @@ function JoinForm(props: { sections: { id: number; name: string }[]; values?: Re
         </label>
         <label>
           Full Name
-          <input name="full_name" required minlength={3} maxlength={100} value={v.full_name ?? ''} placeholder="As per ITS record" />
+          <input name="full_name" required minlength={3} maxlength={100} value={v.full_name ?? ''} placeholder="e.g. M Huzaifa Master" />
         </label>
         <label>
           Section / Department
@@ -123,7 +123,7 @@ function JoinForm(props: { sections: { id: number; name: string }[]; values?: Re
           </select>
         </label>
         <p class="hint">
-          Your login ID will be your ITS number and your initial password will be your <b>first name in lowercase</b>.
+          Your login ID will be your ITS number and your initial password will be your <b>first name in lowercase</b> (M / Mulla / Shk prefixes are skipped — <i>M Taha Kamlapur</i> → <code>taha</code>).
           You can change it later from Settings.
         </p>
         <button class="btn btn-primary btn-block" type="submit">Submit joining request</button>

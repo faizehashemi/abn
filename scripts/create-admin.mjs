@@ -8,6 +8,7 @@
 import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
 import { webcrypto as crypto } from 'node:crypto'
+import { defaultPassword } from './names.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name) => args.includes(`--${name}`)
@@ -22,7 +23,7 @@ rl.close()
 if (!/^\d{8}$/.test(its)) { console.error('ITS must be exactly 8 digits.'); process.exit(1) }
 if (name.length < 3) { console.error('Name is required.'); process.exit(1) }
 
-const firstName = name.split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '') || its
+const firstName = defaultPassword(name, its)
 const password = opt('password') ?? firstName
 
 // Same format as src/lib/crypto.ts: pbkdf2$<iter>$<salt>$<hash>
