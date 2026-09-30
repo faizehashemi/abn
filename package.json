@@ -13,9 +13,7 @@
     "setup:local": "npm run db:migrate:local && npm run create-admin:local",
     "typecheck": "tsc --noEmit",
     "deploy": "wrangler deploy",
-    "seed:demo": "node scripts/seed-demo.mjs",
-    "dev:site": "wrangler dev --config site/wrangler.jsonc --port 8788",
-    "deploy:site": "wrangler deploy --config site/wrangler.jsonc"
+    "seed:demo": "node scripts/seed-demo.mjs"
   },
   "dependencies": {
     "hono": "^4.6.0",

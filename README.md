@@ -77,18 +77,6 @@ npx wrangler deploy                                 # attaches the raajsoftware.
 
 The sub-path is controlled by `BASE_PATH` (`/abn`) and `APP_URL` in `wrangler.jsonc`. Static files live in `public/abn/`. To move the portal to a different path or its own subdomain, change those two values, rename that folder and update `routes`.
 
-## Raaj Software website (raajsoftware.com)
-
-The company landing page lives in `site/`. It's a separate Worker (`raaj-site`) with its own D1 database (`raaj-site-db`) for newsletter sign-ups. It takes `raajsoftware.com/*`. Cloudflare sends each request to the most specific matching route, so `/abn` still reaches the portal.
-
-```bash
-npm run dev:site        # http://localhost:8788 (first time: npx wrangler d1 migrations apply raaj-site-db --local --config site/wrangler.jsonc)
-npm run deploy:site     # publish raajsoftware.com
-```
-
-- Edit the text in `site/public/index.html` and the styles in `site/public/styles.css`.
-- **Newsletter subscribers:** Cloudflare Dashboard → Storage & Databases → D1 → `raaj-site-db` → Console, then run `SELECT email, created_at FROM subscribers ORDER BY id DESC;`
-
 ## Email
 
 Configure one of these. With neither, emails are only recorded on the admin **Email Log** page, which is handy locally.
