@@ -141,6 +141,18 @@ ok(r.status === 401, 'old default password no longer works')
 r = await t2.post('/login', { its, password: 'newpass123' })
 ok(r.location === '/dashboard', 'new password works')
 
+// 8b. A teacher who hasn't completed their profile still counts on the leaderboard
+const its2 = String(Math.floor(30000000 + Math.random() * 9999999))
+r = await admin.post('/admin/teachers/new', { its: its2, full_name: `M Nofile ${its2}`, section_id: '1', role: 'teacher' })
+ok(r.status === 303, 'coordinator adds teacher directly (no profile yet)')
+r = await admin.get(`/admin/teachers?q=${its2}`)
+const nid = r.text.match(/href="\/abn\/teachers\/(\d+)"|href="\/teachers\/(\d+)"/).slice(1).find(Boolean)
+r = await admin.post(`/teachers/${nid}/points`, { kind: 'merit', points: '7', event_date: today, reason: 'Covered extra classes' })
+ok(r.status === 303, 'coordinator gives merit (auto-approved)')
+r = await admin.get('/leaderboard')
+const row = r.text.split('<tr').find((x) => x.includes('who-cell') && x.includes(`M Nofile ${its2}`))
+ok(!!row && row.includes('+7') && row.includes('<b>7</b>'), 'leaderboard shows merit for teacher without completed profile')
+
 // 9. CSRF guard
 r = await fetch(BASE + P + '/login', { method: 'POST', headers: { Origin: 'https://evil.example', 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'its=1&password=1', redirect: 'manual' })
 ok(r.status === 403, 'cross-site POST blocked')

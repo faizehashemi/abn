@@ -15,7 +15,7 @@ export type ScoreRow = {
 }
 
 /**
- * Scores for every active teacher / section head who has completed onboarding.
+ * Scores for every active teacher / section head (whether or not their profile is complete yet).
  * Final score = approved merits − approved demerits. Ranks use standard
  * competition ranking (1, 2, 2, 4 …).
  */
@@ -28,7 +28,7 @@ export async function scoreboard(env: Env, sectionId?: number | null): Promise<S
        FROM users u
        LEFT JOIN sections s ON s.id = u.section_id
        LEFT JOIN points p ON p.teacher_id = u.id AND p.status = 'approved'
-      WHERE u.status = 'active' AND u.role IN ('teacher', 'head') AND u.profile_complete = 1 ${where}
+      WHERE u.status = 'active' AND u.role IN ('teacher', 'head') ${where}
       GROUP BY u.id
       ORDER BY (merits - demerits) DESC, merits DESC, u.full_name COLLATE NOCASE`,
   )
