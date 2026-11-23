@@ -39,9 +39,17 @@ function client() {
 
 const its = String(Math.floor(20000000 + Math.random() * 9999999))
 
+// Demo Tahfeez section ids (seed-demo creates "Hifz Stage 1..3")
+const setup = client()
+await setup.post('/login', { its: '12345678', password: 'main' })
+const secPage = (await setup.get('/admin/sections')).text
+const secId = (name) => secPage.match(new RegExp(`action="[^"]*/admin/sections/(\\d+)"[^>]*><input name="name" value="${name}"`))?.[1]
+const S1 = secId('Hifz Stage 1'), S2 = secId('Hifz Stage 2')
+if (!S1 || !S2) { console.log('✘ demo sections not found — run seed:demo on a fresh DB'); process.exit(1) }
+
 // 1. Join
 const guest = client()
-let r = await guest.post('/join', { its, full_name: 'M Qasim Test', section_ids: '1' })
+let r = await guest.post('/join', { its, full_name: 'M Qasim Test', section_ids: S1 })
 ok(r.status === 200 && r.text.includes('Pending Approval') && r.text.includes('qasim'), 'join request shows pending + default password')
 r = await guest.post('/login', { its, password: 'qasim' })
 ok(r.status === 403 && r.text.includes('Pending Approval'), 'pending user cannot log in')
@@ -54,7 +62,7 @@ r = await admin.get('/admin/approvals')
 ok(r.text.includes('M Qasim Test'), 'join request appears in approval queue')
 const qasimBlock = r.text.split('queue-item').find((b) => b.includes('M Qasim Test'))
 const qid = qasimBlock.match(/\/admin\/users\/(\d+)\/approve/)[1]
-r = await admin.post(`/admin/users/${qid}/approve`, { section_ids: '1', role: 'teacher' })
+r = await admin.post(`/admin/users/${qid}/approve`, { section_ids: S1, role: 'teacher' })
 ok(r.status === 303, 'coordinator approves')
 
 // 3. Teacher: consent -> profile
@@ -69,7 +77,7 @@ r = await t.get('/leaderboard')
 ok(r.location === '/profile/complete', 'cannot skip profile completion')
 const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), (ch) => ch.charCodeAt(0))
 const fd = new FormData()
-Object.entries({ full_name: 'M Qasim Test', phone: '9826012345', email: 'qasim@example.com', section_ids: '1', date_of_joining: '2020-07-01', qualification: 'B.Sc. B.Ed.', address: 'Indore' }).forEach(([k, v]) => fd.append(k, v))
+Object.entries({ full_name: 'M Qasim Test', phone: '9826012345', email: 'qasim@example.com', section_ids: S1, date_of_joining: '2020-07-01', qualification: 'B.Sc. B.Ed.', address: 'Indore' }).forEach(([k, v]) => fd.append(k, v))
 fd.append('photo', new Blob([png], { type: 'image/png' }), 'me.png')
 r = await t.post('/profile/complete', fd)
 ok(r.status === 303 && r.location === '/dashboard', 'profile completed with photo')
@@ -116,7 +124,7 @@ const head2 = client()
 await head2.post('/login', { its: '10000002', password: 'taha' })
 r = await head2.get('/attendance/mark')
 ok(r.status === 200 && !r.text.includes(its), 'authorised head marks only own section')
-r = await admin.get(`/attendance/report?section=1`)
+r = await admin.get(`/attendance/report?section=${S1}`)
 ok(r.text.includes('M Qasim Test') && r.text.includes('att-matrix'), 'monthly report with section filter')
 
 // 7. Announcement + email log
@@ -143,7 +151,7 @@ ok(r.location === '/dashboard', 'new password works')
 
 // 8b. A teacher who hasn't completed their profile still counts on the leaderboard
 const its2 = String(Math.floor(30000000 + Math.random() * 9999999))
-r = await admin.post('/admin/teachers/new', { its: its2, full_name: `M Nofile ${its2}`, section_ids: '1', role: 'teacher' })
+r = await admin.post('/admin/teachers/new', { its: its2, full_name: `M Nofile ${its2}`, section_ids: S1, role: 'teacher' })
 ok(r.status === 303, 'coordinator adds teacher directly (no profile yet)')
 r = await admin.get(`/admin/teachers?q=${its2}`)
 const nid = r.text.match(/href="\/abn\/teachers\/(\d+)"|href="\/teachers\/(\d+)"/).slice(1).find(Boolean)
@@ -160,7 +168,7 @@ r = await admin.post('/attendance/mark', { date: today, id: qid, [`s_${qid}`]: '
 ok(r.status === 303, 'mark Casual Leave (CL)')
 r = await admin.post('/attendance/upload', { text: `${its},${yesterday},EA`, date: today })
 ok(r.status === 303, 'CSV upload with EA code')
-r = await admin.get(`/attendance/report?month=${today.slice(0, 7)}&section=1`)
+r = await admin.get(`/attendance/report?month=${today.slice(0, 7)}&section=${S1}`)
 const qRow = r.text.split('<tr').find((x) => x.includes('M Qasim Test'))
 ok(qRow.includes('>CL<') && (today.slice(0, 7) !== yesterday.slice(0, 7) || qRow.includes('>EA<')), 'monthly report shows CL and EA codes')
 r = await admin.get(`/attendance/mark?date=${today}`)
@@ -171,16 +179,16 @@ ok(!r.text.includes(`name="s_${qid}" value="present" checked`), 'future P reject
 
 // 11. Multiple sections per teacher
 r = await head2.get(`/teachers/${qid}`)
-ok(r.status === 403, 'Secondary head cannot see Primary-only teacher')
-r = await admin.post(`/admin/teachers/${qid}/access`, [['role', 'teacher'], ['section_ids', '1'], ['section_ids', '2'], ['attendance_scope', 'none'], ['status', 'active']])
+ok(r.status === 403, 'Stage 2 head cannot see Stage-1-only teacher')
+r = await admin.post(`/admin/teachers/${qid}/access`, [['role', 'teacher'], ['section_ids', S1], ['section_ids', S2], ['attendance_scope', 'none'], ['status', 'active']])
 ok(r.status === 303, 'coordinator assigns two sections')
 r = await head2.get(`/teachers/${qid}`)
-ok(r.status === 200 && r.text.includes('Junior, Middle'), 'teacher now visible to Middle-section head, shows both sections')
+ok(r.status === 200 && r.text.includes('Hifz Stage 1, Hifz Stage 2'), 'teacher now visible to Stage 2 head, shows both sections')
 r = await head.get('/team')
-ok(r.text.includes('M Qasim Test'), 'still in Primary head\'s team')
+ok(r.text.includes('M Qasim Test'), 'still in Stage 1 head\'s team')
 r = await head2.get('/team')
-ok(r.text.includes('M Qasim Test'), 'and in Secondary head\'s team')
-r = await admin.get('/leaderboard?section=2')
+ok(r.text.includes('M Qasim Test'), 'and in Stage 2 head\'s team')
+r = await admin.get(`/leaderboard?section=${S2}`)
 ok(r.text.includes('M Qasim Test'), 'leaderboard section filter includes multi-section teacher')
 
 // 12. Leave: apply -> approve -> attendance + broadcast -> revoke
@@ -226,16 +234,17 @@ ok(r.text.includes('pill-cancelled') && !r.text.includes('/cancel"'), 'teacher w
 // 13. Hierarchy: Principal → Wings (Tahfeez pilot, Academics later) → Sections → Teachers
 r = await admin.get('/admin/sections')
 ok(r.text.includes('Tahfeez') && r.text.includes('Academics') && r.text.includes('In development'), 'Tahfeez and Academics wings, Academics in development')
-ok(['Junior', 'Nursery – 2nd', 'Middle', '3rd – 10th', 'Senior', '11th – 12th'].every((x) => r.text.includes(x)), 'Junior / Middle / Senior sections with classes')
+const academicsCard = r.text.slice(r.text.lastIndexOf('In development'))
+ok(['Junior', 'Nursery – 2nd', 'Middle', '3rd – 10th', 'Senior', '11th – 12th'].every((x) => academicsCard.includes(x)), 'Junior / Middle / Senior school sections sit under Academics')
 const tahfeezId = r.text.match(/section=w(\d+)">Teachers in Tahfeez/)?.[1]
 r = await guest.get('/join')
-ok(r.text.includes('Tahfeez') && r.text.includes('Junior (Nursery – 2nd)'), 'join form groups sections by wing')
+ok(r.text.includes('Tahfeez') && r.text.includes('Hifz Stage 1') && !r.text.includes('Junior (Nursery'), 'join form offers Tahfeez sections, not Academics (in development)')
 r = await admin.get(`/leaderboard?section=w${tahfeezId}`)
 ok(r.text.includes('All of Tahfeez') && r.text.includes('M Qasim Test'), 'filter by whole wing')
 r = await admin.get('/dashboard')
 ok(r.text.includes('Principal'), 'top role shown as Principal')
 // hand Principal rights to someone, then take them back
-r = await admin.post(`/admin/teachers/${qid}/access`, [['role', 'coordinator'], ['section_ids', '1'], ['attendance_scope', 'none'], ['status', 'active']])
+r = await admin.post(`/admin/teachers/${qid}/access`, [['role', 'coordinator'], ['section_ids', S1], ['attendance_scope', 'none'], ['status', 'active']])
 ok(r.location === '/settings', 'teacher promoted to Principal')
 r = await admin.get('/settings')
 ok(r.text.includes('M Qasim Test') && r.text.includes('/admin/principals/'), 'Principals list shows the new Principal')

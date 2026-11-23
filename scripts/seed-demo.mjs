@@ -23,8 +23,8 @@ async function hash(pw) {
 }
 const q = (s) => (s == null ? 'NULL' : `'${String(s).replace(/'/g, "''")}'`)
 
-// Junior / Middle / Senior come from migration 0004 (Tahfeez wing); Administration is demo-only.
-const sections = ['Junior', 'Middle', 'Senior', 'Administration']
+// Demo Tahfeez (Hifz) sections. Junior / Middle / Senior (Academics, in development) come from migrations.
+const sections = ['Hifz Stage 1', 'Hifz Stage 2', 'Hifz Stage 3', 'Administration']
 const sid = (n) => `(SELECT id FROM sections WHERE name = '${sections[n - 1]}')`
 const people = [
   ['10000001', 'M Huzaifa Master', 1, 'head', 'none'],
