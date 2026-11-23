@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import type { AppEnv, PointRow } from '../types'
 import { page, barePage, PageHead, Avatar, Empty } from '../views/layout'
-import { AttendanceCalendar, AttendanceSummary, AwayList, PointsTable, ProfileForm, ScoreCards, attendanceSentence } from '../views/components'
-import { approvedLeaveBetween, attendanceCounts, getSetting, listSections, pendingCounts, scoreboard, teacherTotals } from '../lib/queries'
+import { AttendanceCalendar, AttendanceSummary, AwayList, PointsTable, ProfileForm, ScoreCards, SectionSelect, attendanceSentence } from '../views/components'
+import { approvedLeaveBetween, attendanceCounts, getSetting, listSections, parseSectionFilter, pendingCounts, scoreboard, teacherTotals } from '../lib/queries'
 import { canViewTeacher, getUserById, attendanceScope } from '../lib/auth'
 import { hashPassword, verifyPassword } from '../lib/crypto'
 import { type FormBody, idList, one, saveProfile } from '../lib/profile'
@@ -168,7 +168,7 @@ app.get('/dashboard', async (c) => {
     const board = (await scoreboard(c.env)).slice(0, 5)
     return page(c, 'Dashboard',
       <>
-        <PageHead title={`Salaam, ${user.full_name}`} sub={`Main Coordinator · ${fmtDate(today)}`} />
+        <PageHead title={`Salaam, ${user.full_name}`} sub={`Principal · ${fmtDate(today)}`} />
         <div class="stats">
           <a class="stat stat-link" href="/admin/approvals"><span class="stat-label">Joining requests</span><span class="stat-value">{pending.users}</span></a>
           <a class="stat stat-link" href="/admin/approvals#points"><span class="stat-label">Merit/Demerit to approve</span><span class="stat-value">{pending.points}</span></a>
@@ -254,18 +254,15 @@ function MiniBoard(props: { rows: Awaited<ReturnType<typeof scoreboard>> }) {
 app.get('/leaderboard', async (c) => {
   const user = c.get('user')
   const sections = await listSections(c.env)
-  const sectionParam = c.req.query('section')
-  const sectionId = sectionParam ? Number(sectionParam) : null
-  const rows = await scoreboard(c.env, sectionId ? [sectionId] : null)
-  const podium = sectionId == null ? rows.filter((r) => r.rank <= 3).slice(0, 3) : []
+  const sectionParam = c.req.query('section') ?? ''
+  const filterIds = parseSectionFilter(sectionParam, sections)
+  const rows = await scoreboard(c.env, filterIds)
+  const podium = rows.length >= 3 ? rows.filter((r) => r.rank <= 3).slice(0, 3) : []
   return page(c, 'Leaderboard',
     <>
       <PageHead title="Leaderboard" sub="Ranked by Final Score = Total Merits − Total Demerits" actions={
         <form method="get" class="inline-form">
-          <select name="section" onchange="this.form.submit()">
-            <option value="">All sections</option>
-            {sections.map((s) => <option value={String(s.id)} selected={s.id === sectionId}>{s.name}</option>)}
-          </select>
+          <SectionSelect sections={sections} value={sectionParam} autoSubmit />
           <noscript><button class="btn btn-sm">Filter</button></noscript>
         </form>
       } />
@@ -323,7 +320,7 @@ app.get('/my/points', async (c) => {
   ).bind(user.id).all<PointRow>()
   return page(c, 'My Points',
     <>
-      <PageHead title="My Merits & Demerits" sub="Only entries approved by the Main Coordinator are shown and counted." />
+      <PageHead title="My Merits & Demerits" sub="Only entries approved by the Principal are shown and counted." />
       <ScoreCards {...totals} />
       <section class="card"><h2>History</h2><PointsTable rows={results} you showRequester /></section>
     </>,
@@ -410,7 +407,7 @@ app.get('/profile', async (c) => {
   if (user.role === 'coordinator') return c.redirect('/settings', 303)
   return page(c, 'My Profile',
     <>
-      <PageHead title="My Profile" sub="Name, section and date of joining can only be changed by the Main Coordinator." />
+      <PageHead title="My Profile" sub="Name, section and date of joining can only be changed by the Principal." />
       <ProfileForm user={user} sections={[]} mode="self" action="/profile" />
     </>,
   )
@@ -431,6 +428,9 @@ app.post('/profile', async (c) => {
 
 app.get('/settings', async (c) => {
   const user = c.get('user')
+  const principals = user.role === 'coordinator'
+    ? (await c.env.DB.prepare(`SELECT id, its, full_name FROM users WHERE role = 'coordinator' AND status = 'active' ORDER BY id`).all<{ id: number; its: string; full_name: string }>()).results
+    : []
   return page(c, 'Settings',
     <>
       <PageHead title="Settings" />
@@ -444,6 +444,25 @@ app.get('/settings', async (c) => {
           <button class="btn btn-primary" type="submit">Update password</button>
         </form>
       </section>
+      {user.role === 'coordinator' ? (
+        <section class="card narrow">
+          <h2>Principals</h2>
+          <p class="muted small">Principals have full access: approvals, all teachers, attendance, leave, announcements and settings.
+            To hand over or share these rights, open a teacher's page and set their role to <b>Principal (full access)</b>.</p>
+          <ul class="away-list">
+            {principals.map((p) => (
+              <li>
+                <div class="grow"><b>{p.full_name}</b> <span class="muted small">· ITS {p.its}{p.id === user.id ? ' · you' : ''}</span></div>
+                {principals.length > 1 ? (
+                  <form method="post" action={`/admin/principals/${p.id}/remove`} data-confirm={`Remove Principal access from ${p.full_name}? They become a regular teacher.`}>
+                    <button class="btn btn-sm btn-demerit">Remove access</button>
+                  </form>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </>,
   )
 })

@@ -371,3 +371,12 @@ body.bare { background: radial-gradient(circle at top, #2a3c63 0%, #1d2b4a 45%, 
 .grid-2 { margin-bottom: 18px; }
 /* Marking sheet: name takes its own line on narrow screens, codes below */
 .att-list li > .who-cell { flex: 1 1 240px; }
+
+/* ---------- wings ---------- */
+.wing-checks { display: flex; flex-direction: column; gap: 8px; }
+.wing-label { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--gold); margin-bottom: 2px; }
+.wing-list { list-style: none; margin: 0; padding: 0; }
+.wing-list li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.wing-list li:last-child { border-bottom: 0; }
+.wing-list label.check { white-space: nowrap; }
+.wing-list input[type=checkbox] { width: auto; min-width: 0; }

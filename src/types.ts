@@ -52,7 +52,8 @@ export type User = {
   approved_at: string | null
 }
 
-export type Section = { id: number; name: string }
+export type Wing = { id: number; name: string; active: number; sort: number }
+export type Section = { id: number; name: string; wing_id: number | null; wing_name: string | null; wing_active: number | null; grades: string | null }
 
 export type PointRow = {
   id: number

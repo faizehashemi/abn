@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { AppEnv, User } from '../types'
+import type { AppEnv, Section, User } from '../types'
 import { barePage } from '../views/layout'
 import { createSession, currentUser, destroySession } from '../lib/auth'
 import { defaultPassword, hashPassword, verifyPassword } from '../lib/crypto'
@@ -80,13 +80,13 @@ app.post('/login', async (c) => {
     return barePage(c, 'Log in', <LoginForm its={its} error="Incorrect ITS number or password." />, 401)
   }
   if (user.status === 'pending') {
-    return barePage(c, 'Pending approval', <LoginForm its={its} info="Your joining request is Pending Approval by the Main Coordinator. Please try again once it has been approved." />, 403)
+    return barePage(c, 'Pending approval', <LoginForm its={its} info="Your joining request is Pending Approval by the Principal. Please try again once it has been approved." />, 403)
   }
   if (user.status === 'rejected') {
-    return barePage(c, 'Log in', <LoginForm its={its} error="Your joining request was not approved. Please contact the Main Coordinator." />, 403)
+    return barePage(c, 'Log in', <LoginForm its={its} error="Your joining request was not approved. Please contact the Principal." />, 403)
   }
   if (user.status === 'disabled') {
-    return barePage(c, 'Log in', <LoginForm its={its} error="This account has been disabled. Please contact the Main Coordinator." />, 403)
+    return barePage(c, 'Log in', <LoginForm its={its} error="This account has been disabled. Please contact the Principal." />, 403)
   }
   await createSession(c, user.id)
   return c.redirect('/dashboard', 303)
@@ -100,7 +100,7 @@ app.post('/logout', async (c) => {
 
 // ---------- join (registration request) ----------
 
-function JoinForm(props: { sections: { id: number; name: string }[]; values?: { its?: string; full_name?: string; section_ids?: number[] }; error?: string }) {
+function JoinForm(props: { sections: Section[]; values?: { its?: string; full_name?: string; section_ids?: number[] }; error?: string }) {
   const v = props.values ?? {}
   return (
     <AuthCard>
@@ -180,7 +180,7 @@ app.post('/join', async (c) => {
         <span class="pill pill-pending">Pending Approval</span>
         <h2>Request submitted</h2>
         <p>
-          Thank you, <b>{fullName}</b>. Your joining request has been sent to the Main Coordinator.
+          Thank you, <b>{fullName}</b>. Your joining request has been sent to the Principal.
         </p>
         <p>Once approved, log in with:</p>
         <table class="kv">

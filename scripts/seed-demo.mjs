@@ -23,7 +23,9 @@ async function hash(pw) {
 }
 const q = (s) => (s == null ? 'NULL' : `'${String(s).replace(/'/g, "''")}'`)
 
-const sections = ['Primary', 'Secondary', 'Higher Secondary', 'Administration']
+// Junior / Middle / Senior come from migration 0004 (Tahfeez wing); Administration is demo-only.
+const sections = ['Junior', 'Middle', 'Senior', 'Administration']
+const sid = (n) => `(SELECT id FROM sections WHERE name = '${sections[n - 1]}')`
 const people = [
   ['10000001', 'M Huzaifa Master', 1, 'head', 'none'],
   ['10000002', 'M Taha Kamlapur', 2, 'head', 'section'],
@@ -39,19 +41,19 @@ const people = [
 const pending = [['10000011', 'M Shabbir Bohra', 1], ['10000012', 'M Juzer Taher', null]]
 
 const lines = []
-sections.forEach((s, i) => lines.push(`INSERT OR IGNORE INTO sections (id, name) VALUES (${i + 1}, ${q(s)});`))
+sections.forEach((s) => lines.push(`INSERT OR IGNORE INTO sections (name, wing_id) VALUES (${q(s)}, (SELECT id FROM wings WHERE name = 'Tahfeez'));`))
 for (const [its, name, sec, role, scope = 'none'] of people) {
   const pw = defaultPassword(name)
   lines.push(`INSERT OR IGNORE INTO users (its, full_name, password_hash, role, status, section_id, attendance_scope, consent_at, profile_complete, phone, email, date_of_joining, qualification, designation, subjects, address, approved_at)
-VALUES (${q(its)}, ${q(name)}, ${q(await hash(pw))}, ${q(role)}, 'active', ${sec}, ${q(scope)}, datetime('now'), 1, '98260${its.slice(-5)}', ${q(pw + '@example.com')}, '2019-06-1${its.slice(-1)}', 'M.A. B.Ed.', ${q(role === 'head' ? 'Section Head' : 'Teacher')}, 'English', 'Saifee Nagar, Indore', datetime('now'));`)
+VALUES (${q(its)}, ${q(name)}, ${q(await hash(pw))}, ${q(role)}, 'active', ${sid(sec)}, ${q(scope)}, datetime('now'), 1, '98260${its.slice(-5)}', ${q(pw + '@example.com')}, '2019-06-1${its.slice(-1)}', 'M.A. B.Ed.', ${q(role === 'head' ? 'Section Head' : 'Teacher')}, 'English', 'Saifee Nagar, Indore', datetime('now'));`)
 }
 for (const [its, name, sec] of pending) {
-  lines.push(`INSERT OR IGNORE INTO users (its, full_name, password_hash, status, section_id) VALUES (${q(its)}, ${q(name)}, ${q(await hash(defaultPassword(name)))}, 'pending', ${sec ?? 'NULL'});`)
+  lines.push(`INSERT OR IGNORE INTO users (its, full_name, password_hash, status, section_id) VALUES (${q(its)}, ${q(name)}, ${q(await hash(defaultPassword(name)))}, 'pending', ${sec ? sid(sec) : 'NULL'});`)
 }
 // Sections live in user_sections; some teachers teach in two sections.
 lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, section_id FROM users WHERE section_id IS NOT NULL;`)
-lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, 2 FROM users WHERE its IN ('10000001', '10000004');`)
-lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, 3 FROM users WHERE its = '10000006';`)
+lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, ${sid(2)} FROM users WHERE its IN ('10000001', '10000004');`)
+lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, ${sid(3)} FROM users WHERE its = '10000006';`)
 
 const coord = `(SELECT id FROM users WHERE role = 'coordinator' ORDER BY id LIMIT 1)`
 const uid = (its) => `(SELECT id FROM users WHERE its = '${its}')`

@@ -10,7 +10,7 @@ import { ATT_CODE, addDays, back, dateRange, fmtDateTime, isISODate, str, todayI
 
 // Leave workflow
 //   Teacher / Section Head applies (CL or EA, a date range, a reason)  -> pending
-//   Main Coordinator approves                                          -> approved
+//   Principal approves                                          -> approved
 //     · attendance for each day in the range (Sundays skipped) is set to CL / EA, linked by leave_id
 //     · an Important announcement tells everyone who is away, so classes can be covered
 //       (pop-up on dashboards + email); the teacher's reason is NOT broadcast
@@ -105,7 +105,7 @@ app.get('/', async (c) => {
                 <label>From<input type="date" name="start_date" min={today} value={today} required /></label>
                 <label>To<input type="date" name="end_date" min={today} value={today} required /></label>
               </div>
-              <label>Reason<textarea name="reason" rows={2} maxlength={300} required placeholder="Seen only by the Main Coordinator"></textarea></label>
+              <label>Reason<textarea name="reason" rows={2} maxlength={300} required placeholder="Seen only by the Principal"></textarea></label>
               <p class="hint">Up to {MAX_DAYS} days per application. Sundays are not counted.</p>
               <button class="btn btn-primary" type="submit">Send for approval</button>
             </form>
@@ -144,7 +144,7 @@ function LeaveTable(props: { rows: LeaveRow[]; tz: string; today: string; viewer
               {props.showName ? <td><a href={`/teachers/${l.teacher_id}`}>{l.teacher_name}</a></td> : null}
               <td><span class={`code-chip code-${l.kind}`}>{ATT_CODE[l.kind]}</span></td>
               <td>{leaveDates(l)}<div class="muted small">{dayCount(l)}</div></td>
-              <td>{l.reason}{l.review_note ? <div class="muted small">Coordinator: {l.review_note}</div> : null}</td>
+              <td>{l.reason}{l.review_note ? <div class="muted small">Principal: {l.review_note}</div> : null}</td>
               <td><StatusPill status={l.status} /></td>
               <td>
                 {l.status === 'pending' && l.teacher_id === props.viewer.id ? (
@@ -176,7 +176,7 @@ app.post('/', async (c) => {
 
   if (!kind) return back(c, '/leave', 'err', 'Choose CL or EA.')
   if (!isISODate(start) || !isISODate(end)) return back(c, '/leave', 'err', 'Enter valid dates.')
-  if (start < today) return back(c, '/leave', 'err', 'Leave can only be applied for today or later. Ask the Coordinator to record past days.')
+  if (start < today) return back(c, '/leave', 'err', 'Leave can only be applied for today or later. Ask the Principal to record past days.')
   if (end < start) return back(c, '/leave', 'err', '"To" date must be on or after the "From" date.')
   if (dateRange(start, end).length > MAX_DAYS) return back(c, '/leave', 'err', `Apply for at most ${MAX_DAYS} days at a time.`)
   if (!workingDays({ start_date: start, end_date: end }).length) return back(c, '/leave', 'err', 'The dates you chose are all Sundays.')
@@ -189,7 +189,7 @@ app.post('/', async (c) => {
 
   await c.env.DB.prepare('INSERT INTO leave_requests (teacher_id, kind, start_date, end_date, reason) VALUES (?, ?, ?, ?, ?)')
     .bind(user.id, kind, start, end, reason).run()
-  return back(c, '/leave', 'ok', `Leave application sent to the Main Coordinator: ${LEAVE_LABEL[kind]}, ${leaveDates({ start_date: start, end_date: end })}.`)
+  return back(c, '/leave', 'ok', `Leave application sent to the Principal: ${LEAVE_LABEL[kind]}, ${leaveDates({ start_date: start, end_date: end })}.`)
 })
 
 app.post('/:id/cancel', async (c) => {

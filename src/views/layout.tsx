@@ -41,7 +41,7 @@ function navFor(user: User, pending: number): NavItem[] {
   return items
 }
 
-const ROLE_LABEL = { coordinator: 'Main Coordinator', head: 'Section Head', teacher: 'Teacher' } as const
+const ROLE_LABEL = { coordinator: 'Principal', head: 'Section Head', teacher: 'Teacher' } as const
 
 export function Shell(props: { title: string; children: Child; bare?: boolean; flash?: Flash | null; user?: User | null; nav?: NavItem[]; path?: string }) {
   const { title, children, user, nav, path, flash } = props

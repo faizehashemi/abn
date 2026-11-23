@@ -175,7 +175,7 @@ ok(r.status === 403, 'Secondary head cannot see Primary-only teacher')
 r = await admin.post(`/admin/teachers/${qid}/access`, [['role', 'teacher'], ['section_ids', '1'], ['section_ids', '2'], ['attendance_scope', 'none'], ['status', 'active']])
 ok(r.status === 303, 'coordinator assigns two sections')
 r = await head2.get(`/teachers/${qid}`)
-ok(r.status === 200 && r.text.includes('Primary, Secondary'), 'teacher now visible to Secondary head, shows both sections')
+ok(r.status === 200 && r.text.includes('Junior, Middle'), 'teacher now visible to Middle-section head, shows both sections')
 r = await head.get('/team')
 ok(r.text.includes('M Qasim Test'), 'still in Primary head\'s team')
 r = await head2.get('/team')
@@ -222,6 +222,26 @@ const pendId = r.text.match(/\/leave\/(\d+)\/cancel/)?.[1]
 r = await t2.post(`/leave/${pendId}/cancel`, {})
 r = await t2.get('/leave')
 ok(r.text.includes('pill-cancelled') && !r.text.includes('/cancel"'), 'teacher withdraws pending application')
+
+// 13. Hierarchy: Principal → Wings (Tahfeez pilot, Academics later) → Sections → Teachers
+r = await admin.get('/admin/sections')
+ok(r.text.includes('Tahfeez') && r.text.includes('Academics') && r.text.includes('In development'), 'Tahfeez and Academics wings, Academics in development')
+ok(['Junior', 'Nursery – 2nd', 'Middle', '3rd – 10th', 'Senior', '11th – 12th'].every((x) => r.text.includes(x)), 'Junior / Middle / Senior sections with classes')
+const tahfeezId = r.text.match(/section=w(\d+)">Teachers in Tahfeez/)?.[1]
+r = await guest.get('/join')
+ok(r.text.includes('Tahfeez') && r.text.includes('Junior (Nursery – 2nd)'), 'join form groups sections by wing')
+r = await admin.get(`/leaderboard?section=w${tahfeezId}`)
+ok(r.text.includes('All of Tahfeez') && r.text.includes('M Qasim Test'), 'filter by whole wing')
+r = await admin.get('/dashboard')
+ok(r.text.includes('Principal'), 'top role shown as Principal')
+// hand Principal rights to someone, then take them back
+r = await admin.post(`/admin/teachers/${qid}/access`, [['role', 'coordinator'], ['section_ids', '1'], ['attendance_scope', 'none'], ['status', 'active']])
+ok(r.location === '/settings', 'teacher promoted to Principal')
+r = await admin.get('/settings')
+ok(r.text.includes('M Qasim Test') && r.text.includes('/admin/principals/'), 'Principals list shows the new Principal')
+r = await admin.post(`/admin/principals/${qid}/remove`, {})
+r = await admin.get('/settings')
+ok(!r.text.includes(`/admin/principals/${qid}/remove`), 'Principal access removed again')
 
 // 9. CSRF guard
 r = await fetch(BASE + P + '/login', { method: 'POST', headers: { Origin: 'https://evil.example', 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'its=1&password=1', redirect: 'manual' })

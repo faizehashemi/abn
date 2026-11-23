@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import type { AppEnv, AttendanceStatus, User } from '../types'
 import { page, PageHead, Avatar, Empty } from '../views/layout'
 import { attendanceScope } from '../lib/auth'
-import { SECTION_NAMES_SQL, inSections, listSections } from '../lib/queries'
+import { SECTION_NAMES_SQL, inSections, listSections, parseSectionFilter } from '../lib/queries'
+import { SectionSelect } from '../views/components'
 import {
   ATTENDANCE, ATT_CODE, ATT_LABEL, back, csvCell, currentMonth, daysInMonth, fmtDate, fmtMonth, isISODate, isMonth, monthBounds,
   normaliseDate, parseAttendanceStatus, parseCSV, shiftMonth, str, todayISO, weekdayMon0,
@@ -16,15 +17,15 @@ type Roster = Pick<User, 'id' | 'its' | 'full_name' | 'photo_key'> & { section_n
 const FUTURE_OK: AttendanceStatus[] = ['casual_leave', 'eval_absent']
 
 /** Teachers whose attendance `user` may mark / view, optionally narrowed to one section. */
-async function roster(c: any, user: User, sectionFilter: number | null, forView = false): Promise<Roster[] | null> {
+async function roster(c: any, user: User, filterIds: number[] | null, forView = false): Promise<Roster[] | null> {
   let scope = attendanceScope(user)
   // Every section head may *view* their own sections' attendance, even without marking rights.
   if (scope == null && forView && user.role === 'head' && user.section_ids.length) scope = user.section_ids
   if (scope == null) return null
   const where = [`u.status = 'active'`, `u.role != 'coordinator'`]
   const args: unknown[] = []
-  // A head limited to some sections can still narrow to one of them.
-  const ids = scope === 'all' ? (sectionFilter ? [sectionFilter] : null) : (sectionFilter && scope.includes(sectionFilter) ? [sectionFilter] : scope)
+  // A head limited to some sections can still narrow to some of them.
+  const ids = scope === 'all' ? filterIds : (filterIds ? filterIds.filter((id) => scope.includes(id)) : scope)
   if (ids) { const f = inSections(ids); where.push(f.sql); args.push(...f.args) }
   const { results } = await c.env.DB.prepare(
     `SELECT u.id, u.its, u.full_name, u.photo_key, ${SECTION_NAMES_SQL} AS section_name
@@ -59,9 +60,9 @@ app.get('/mark', async (c) => {
   const tz = c.env.TIMEZONE
   const today = todayISO(tz)
   const date = isISODate(c.req.query('date')) ? c.req.query('date')! : today
-  const sectionFilter = Number(c.req.query('section')) || null
-  const list = await roster(c, user, sectionFilter)
-  if (!list) return c.text('You do not have attendance rights. Ask the Main Coordinator.', 403)
+  const sectionParam = c.req.query('section') ?? ''
+  const list = await roster(c, user, parseSectionFilter(sectionParam, await listSections(c.env)))
+  if (!list) return c.text('You do not have attendance rights. Ask the Principal.', 403)
   const sections = await filterSections(c, user)
   const canFilter = sections.length > 0
 
@@ -71,7 +72,7 @@ app.get('/mark', async (c) => {
   const markedHere = list.filter((t) => existing.has(t.id)).length
   const prevDay = new Date(Date.parse(date + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10)
   const nextDay = new Date(Date.parse(date + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10)
-  const qs = (d: string) => `/attendance/mark?date=${d}${sectionFilter ? `&section=${sectionFilter}` : ''}`
+  const qs = (d: string) => `/attendance/mark?date=${d}${sectionParam ? `&section=${sectionParam}` : ''}`
 
   return page(c, 'Attendance',
     <>
@@ -83,10 +84,7 @@ app.get('/mark', async (c) => {
           <input type="date" name="date" value={date} />
           <a class="btn btn-sm" href={qs(nextDay)}>›</a>
           {canFilter ? (
-            <select name="section">
-              <option value="">All sections</option>
-              {sections.map((s) => <option value={String(s.id)} selected={s.id === sectionFilter}>{s.name}</option>)}
-            </select>
+            <SectionSelect sections={sections} value={sectionParam} />
           ) : null}
           <button class="btn btn-sm">Go</button>
           {date !== today ? <a class="btn btn-sm" href={qs(today)}>Today</a> : null}
@@ -100,7 +98,7 @@ app.get('/mark', async (c) => {
       {list.length === 0 ? <Empty>No active teachers in scope.</Empty> : (
         <form method="post" action="/attendance/mark" class="card">
           <input type="hidden" name="date" value={date} />
-          <input type="hidden" name="section" value={sectionFilter ? String(sectionFilter) : ''} />
+          <input type="hidden" name="section" value={sectionParam} />
           <div class="bulk-actions">
             <span class="muted small">Set everyone to:</span>
             <button type="button" class="btn btn-sm" data-mark-all="present">All Present</button>
@@ -116,7 +114,7 @@ app.get('/mark', async (c) => {
                   <div class="who-cell grow">
                     <Avatar id={t.id} name={t.full_name} photo={t.photo_key} size={32} />
                     <span>
-                      {t.full_name}<small class="muted"> · {t.its}{canFilter && !sectionFilter ? ` · ${t.section_name ?? '—'}` : ''}</small>
+                      {t.full_name}<small class="muted"> · {t.its}{canFilter && !sectionParam ? ` · ${t.section_name ?? '—'}` : ''}</small>
                       {fromLeave.has(t.id) ? <span class="pill pill-leave">approved leave</span> : null}
                     </span>
                   </div>
@@ -231,8 +229,8 @@ app.post('/upload', async (c) => {
 async function reportData(c: any) {
   const user = c.get('user') as User
   const month = isMonth(c.req.query('month')) ? c.req.query('month')! : currentMonth(c.env.TIMEZONE)
-  const sectionFilter = Number(c.req.query('section')) || null
-  const list = await roster(c, user, sectionFilter, true)
+  const sectionFilter = c.req.query('section') ?? ''
+  const list = await roster(c, user, parseSectionFilter(sectionFilter, await listSections(c.env)), true)
   if (!list) return null
   const { start, end } = monthBounds(month)
   const { results } = await c.env.DB.prepare('SELECT teacher_id, date, status FROM attendance WHERE date BETWEEN ? AND ?')
@@ -265,10 +263,7 @@ app.get('/report', async (c) => {
         <input type="month" name="month" value={month} />
         <a class="btn btn-sm" href={q(shiftMonth(month, 1))}>›</a>
         {canFilter ? (
-          <select name="section">
-            <option value="">All sections</option>
-            {sections.map((s) => <option value={String(s.id)} selected={s.id === sectionFilter}>{s.name}</option>)}
-          </select>
+          <SectionSelect sections={sections} value={sectionFilter} />
         ) : null}
         <button class="btn btn-sm">Show</button>
       </form>

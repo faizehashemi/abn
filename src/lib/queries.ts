@@ -1,4 +1,4 @@
-import type { Env, LeaveRow, Section } from '../types'
+import type { Env, LeaveRow, Section, Wing } from '../types'
 import { parseIds } from './util'
 
 // ---------- sections (many-to-many via user_sections) ----------
@@ -103,9 +103,45 @@ export async function attendanceCounts(env: Env, teacherId: number, start?: stri
 
 export type AttendanceTotals = Awaited<ReturnType<typeof attendanceCounts>>
 
+/** All sections with their wing, ordered wing by wing (Tahfeez first), then by the section's own order. */
 export async function listSections(env: Env): Promise<Section[]> {
-  const { results } = await env.DB.prepare('SELECT id, name FROM sections ORDER BY name COLLATE NOCASE').all<Section>()
+  const { results } = await env.DB.prepare(
+    `SELECT s.id, s.name, s.wing_id, s.grades, w.name AS wing_name, w.active AS wing_active
+       FROM sections s LEFT JOIN wings w ON w.id = s.wing_id
+      ORDER BY COALESCE(w.sort, 999), w.name, s.sort, s.name COLLATE NOCASE`,
+  ).all<Section>()
   return results
+}
+
+export async function listWings(env: Env): Promise<Wing[]> {
+  const { results } = await env.DB.prepare('SELECT id, name, active, sort FROM wings ORDER BY sort, name').all<Wing>()
+  return results
+}
+
+/** Group sections by wing, keeping list order. Sections without a wing go under "Other". */
+export function byWing(sections: Section[]): { wing: string; wingId: number | null; active: boolean; sections: Section[] }[] {
+  const groups: { wing: string; wingId: number | null; active: boolean; sections: Section[] }[] = []
+  for (const s of sections) {
+    const name = s.wing_name ?? 'Other'
+    let g = groups.find((x) => x.wing === name)
+    if (!g) groups.push((g = { wing: name, wingId: s.wing_id, active: s.wing_active !== 0, sections: [] }))
+    g.sections.push(s)
+  }
+  return groups
+}
+
+/**
+ * Filter value from a section dropdown: "12" = one section, "w3" = every section in wing 3.
+ * Returns the section ids to filter by, or null for "all".
+ */
+export function parseSectionFilter(value: string | undefined | null, sections: Section[]): number[] | null {
+  if (!value) return null
+  if (value.startsWith('w')) {
+    const wingId = Number(value.slice(1))
+    return sections.filter((s) => s.wing_id === wingId).map((s) => s.id)
+  }
+  const id = Number(value)
+  return Number.isInteger(id) && id > 0 ? [id] : null
 }
 
 export async function pendingCounts(env: Env) {

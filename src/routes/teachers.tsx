@@ -14,7 +14,7 @@ const app = new Hono<AppEnv>()
 app.get('/team', requireRole('head'), async (c) => {
   const user = c.get('user')
   if (!user.section_ids.length) {
-    return page(c, 'My Team', <><PageHead title="My Team" /><Empty>You have not been assigned a section yet. Please contact the Main Coordinator.</Empty></>)
+    return page(c, 'My Team', <><PageHead title="My Team" /><Empty>You have not been assigned a section yet. Please contact the Principal.</Empty></>)
   }
   const rows = await scoreboard(c.env, user.section_ids)
   const { results: requests } = await c.env.DB.prepare(
@@ -63,7 +63,7 @@ app.get('/team', requireRole('head'), async (c) => {
                     <td>{fmtDate(p.event_date)}</td>
                     <td><a href={`/teachers/${p.teacher_id}`}>{p.teacher_name}</a></td>
                     <td class={p.kind}>{p.kind === 'merit' ? '+' : '−'}{p.points} {p.kind}</td>
-                    <td>{p.reason}{p.review_note ? <div class="muted small">Coordinator: {p.review_note}</div> : null}</td>
+                    <td>{p.reason}{p.review_note ? <div class="muted small">Principal: {p.review_note}</div> : null}</td>
                     <td><StatusPill status={p.status} /></td>
                   </tr>
                 ))}
@@ -136,7 +136,7 @@ app.get('/teachers/:id', async (c) => {
         {canGivePoints(viewer, t) ? (
           <section class="card" id="give">
             <h2>Add Merit / Demerit</h2>
-            <p class="muted small">{isCoord ? 'As Main Coordinator your entry is approved immediately.' : 'Your request will be sent to the Main Coordinator for approval.'}</p>
+            <p class="muted small">{isCoord ? 'As Principal your entry is approved immediately.' : 'Your request will be sent to the Principal for approval.'}</p>
             <form method="post" action={`/teachers/${t.id}/points`} class="stack">
               <div class="segmented">
                 <label><input type="radio" name="kind" value="merit" checked={give === 'merit'} /> <span>+ Merit</span></label>
@@ -171,6 +171,7 @@ app.get('/teachers/:id', async (c) => {
                 <select name="role">
                   <option value="teacher" selected={t.role === 'teacher'}>Teacher</option>
                   <option value="head" selected={t.role === 'head'}>Section Head</option>
+                  <option value="coordinator">Principal (full access)</option>
                 </select>
               </label>
               <fieldset class="span-2 fieldset">
@@ -236,7 +237,7 @@ app.post('/teachers/:id/points', async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO points (teacher_id, kind, points, reason, event_date, status, requested_by) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
   ).bind(target.id, kind, points, reason, date, viewer.id).run()
-  return back(c, url, 'ok', `Request sent to the Main Coordinator: ${kind === 'merit' ? '+' : '−'}${points} ${kind} for ${target.full_name}.`)
+  return back(c, url, 'ok', `Request sent to the Principal: ${kind === 'merit' ? '+' : '−'}${points} ${kind} for ${target.full_name}.`)
 })
 
 export default app

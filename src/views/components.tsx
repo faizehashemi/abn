@@ -1,6 +1,6 @@
 import type { LeaveRow, PointRow, Section, User } from '../types'
 import { ATTENDANCE, ATT_CODE, ATT_LABEL, daysInMonth, fmtDate, fmtMonth, shiftMonth, weekdayMon0 } from '../lib/util'
-import type { AttendanceTotals } from '../lib/queries'
+import { byWing, type AttendanceTotals } from '../lib/queries'
 import { Empty, StatusPill } from './layout'
 
 // ---------- score cards ----------
@@ -143,16 +143,48 @@ export function AwayList(props: { rows: LeaveRow[]; today: string; empty: string
 
 // ---------- section picker (multiple sections per teacher) ----------
 
+/** Section label with its classes, e.g. "Junior (Nursery – 2nd)". */
+export function sectionLabel(s: Pick<Section, 'name' | 'grades'>): string {
+  return s.grades ? `${s.name} (${s.grades})` : s.name
+}
+
+/** Tick boxes grouped by wing. Sections in wings still "in development" are not offered unless already ticked. */
 export function SectionChecks(props: { sections: Section[]; selected: number[]; name?: string }) {
-  if (!props.sections.length) return <p class="hint">No sections yet. The Main Coordinator adds them under Sections.</p>
+  const groups = byWing(props.sections)
+    .map((g) => ({ ...g, sections: g.sections.filter((s) => g.active || props.selected.includes(s.id)) }))
+    .filter((g) => g.sections.length)
+  if (!groups.length) return <p class="hint">No sections yet. The Principal adds them under Sections.</p>
   return (
-    <div class="check-grid">
-      {props.sections.map((s) => (
-        <label class="check">
-          <input type="checkbox" name={props.name ?? 'section_ids'} value={String(s.id)} checked={props.selected.includes(s.id)} /> {s.name}
-        </label>
+    <div class="wing-checks">
+      {groups.map((g) => (
+        <div>
+          {groups.length > 1 || g.wing !== 'Other' ? <div class="wing-label">{g.wing}</div> : null}
+          <div class="check-grid">
+            {g.sections.map((s) => (
+              <label class="check">
+                <input type="checkbox" name={props.name ?? 'section_ids'} value={String(s.id)} checked={props.selected.includes(s.id)} /> {sectionLabel(s)}
+              </label>
+            ))}
+          </div>
+        </div>
       ))}
     </div>
+  )
+}
+
+/** Filter dropdown: "All sections", then per wing an "All <wing>" option and its sections. Values: "", "w<id>", "<id>". */
+export function SectionSelect(props: { sections: Section[]; value: string | null | undefined; allLabel?: string; name?: string; autoSubmit?: boolean }) {
+  const v = props.value ?? ''
+  return (
+    <select name={props.name ?? 'section'} onchange={props.autoSubmit ? 'this.form.submit()' : undefined}>
+      <option value="">{props.allLabel ?? 'All sections'}</option>
+      {byWing(props.sections).map((g) => (
+        <optgroup label={g.wing}>
+          {g.wingId != null ? <option value={`w${g.wingId}`} selected={v === `w${g.wingId}`}>All of {g.wing}</option> : null}
+          {g.sections.map((s) => <option value={String(s.id)} selected={v === String(s.id)}>{sectionLabel(s)}</option>)}
+        </optgroup>
+      ))}
+    </select>
   )
 }
 

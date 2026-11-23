@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
 import type { AppEnv, Env, PointRow, User } from '../types'
 import { page, PageHead, Avatar, Empty, StatusPill } from '../views/layout'
-import { ProfileForm, SectionChecks } from '../views/components'
+import { ProfileForm, SectionChecks, SectionSelect, sectionLabel } from '../views/components'
 import { USER_SELECT, getUserById, hydrateUser, requireRole } from '../lib/auth'
 import { defaultPassword, hashPassword } from '../lib/crypto'
-import { SECTION_NAMES_SQL, inSections, listSections, scoreboard, setUserSections, validSectionIds } from '../lib/queries'
+import { SECTION_NAMES_SQL, byWing, inSections, listSections, listWings, parseSectionFilter, scoreboard, setUserSections, validSectionIds } from '../lib/queries'
 import { idList, one, saveProfile } from '../lib/profile'
 import { LeaveQueue, pendingLeave } from './leave'
 import { sendMails, wrapHtml, escapeHtml, emailProvider } from '../lib/email'
@@ -157,11 +157,12 @@ app.post('/points/review', async (c) => {
 app.get('/teachers', async (c) => {
   const sections = await listSections(c.env)
   const q = str(c.req.query('q'), 100)
-  const sectionId = Number(c.req.query('section')) || null
+  const sectionParam = c.req.query('section') ?? ''
+  const filterIds = parseSectionFilter(sectionParam, sections)
   const status = ['active', 'pending', 'rejected', 'disabled'].includes(c.req.query('status') ?? '') ? c.req.query('status')! : 'active'
   const where: string[] = [`u.role != 'coordinator'`, 'u.status = ?']
   const args: unknown[] = [status]
-  if (sectionId) { const f = inSections([sectionId]); where.push(f.sql); args.push(...f.args) }
+  if (filterIds) { const f = inSections(filterIds); where.push(f.sql); args.push(...f.args) }
   if (q) { where.push('(u.full_name LIKE ? OR u.its LIKE ?)'); args.push(`%${q}%`, `%${q}%`) }
   const { results } = await c.env.DB.prepare(`${USER_SELECT} WHERE ${where.join(' AND ')} ORDER BY u.full_name COLLATE NOCASE`).bind(...args).all<User>()
   const scores = new Map((await scoreboard(c.env)).map((r) => [r.id, r]))
@@ -176,10 +177,7 @@ app.get('/teachers', async (c) => {
       } />
       <form method="get" class="filters card">
         <input name="q" value={q} placeholder="Search name or ITS" />
-        <select name="section">
-          <option value="">All sections</option>
-          {sections.map((s) => <option value={String(s.id)} selected={s.id === sectionId}>{s.name}</option>)}
-        </select>
+        <SectionSelect sections={sections} value={sectionParam} />
         <select name="status">
           {['active', 'pending', 'disabled', 'rejected'].map((s) => <option value={s} selected={s === status}>{s[0].toUpperCase() + s.slice(1)}</option>)}
         </select>
@@ -324,7 +322,7 @@ app.post('/teachers/:id/access', async (c) => {
   if (!target || target.role === 'coordinator') return c.notFound()
   const raw = await c.req.parseBody({ all: true })
   const body = Object.fromEntries(Object.keys(raw).map((k) => [k, one(raw, k)]))
-  const role = body.role === 'head' ? 'head' : 'teacher'
+  const role = body.role === 'coordinator' ? 'coordinator' : body.role === 'head' ? 'head' : 'teacher'
   const sectionIds = await validSectionIds(c.env, idList(raw, 'section_ids'))
   const scope = role === 'head' && (body.attendance_scope === 'section' || body.attendance_scope === 'all') ? body.attendance_scope : 'none'
   const status = body.status === 'disabled' ? 'disabled' : 'active'
@@ -333,6 +331,7 @@ app.post('/teachers/:id/access', async (c) => {
     ...setUserSections(c.env, id, sectionIds),
   ])
   if (status === 'disabled') await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run()
+  if (role === 'coordinator') return back(c, '/settings', 'ok', `${target.full_name} now has Principal (full) access. Manage Principals here.`)
   return back(c, `/teachers/${id}`, 'ok', 'Access updated.')
 })
 
@@ -361,70 +360,146 @@ app.post('/teachers/:id/profile', async (c) => {
   return back(c, `/teachers/${id}`, 'ok', 'Profile updated.')
 })
 
-// ---------- sections ----------
+// ---------- principals ----------
+
+app.post('/principals/:id/remove', async (c) => {
+  const me = c.get('user')
+  const id = Number(c.req.param('id'))
+  const count = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'coordinator' AND status = 'active'`).first<{ n: number }>()
+  if ((count?.n ?? 0) <= 1) return back(c, '/settings', 'err', 'There must always be at least one Principal.')
+  const res = await c.env.DB.prepare(`UPDATE users SET role = 'teacher' WHERE id = ? AND role = 'coordinator'`).bind(id).run()
+  if (!res.meta.changes) return back(c, '/settings', 'err', 'Not found.')
+  await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run()
+  if (id === me.id) return c.redirect('/login', 303)
+  return back(c, '/settings', 'ok', 'Principal access removed.')
+})
+
+// ---------- wings & sections ----------
+// Hierarchy: Principal → Wing (e.g. Tahfeez, Academics) → Section (with Section Head) → Teachers.
 
 app.get('/sections', async (c) => {
+  const wings = await listWings(c.env)
   const { results } = await c.env.DB.prepare(
-    `SELECT s.id, s.name,
+    `SELECT s.id, s.name, s.wing_id, s.grades, s.sort, w.name AS wing_name, w.active AS wing_active,
             (SELECT COUNT(*) FROM user_sections us JOIN users u ON u.id = us.user_id WHERE us.section_id = s.id AND u.status = 'active') AS members,
             (SELECT GROUP_CONCAT(u.full_name, ', ') FROM user_sections us JOIN users u ON u.id = us.user_id WHERE us.section_id = s.id AND u.role = 'head' AND u.status = 'active') AS heads
-       FROM sections s ORDER BY s.name COLLATE NOCASE`,
-  ).all<{ id: number; name: string; members: number; heads: string | null }>()
+       FROM sections s LEFT JOIN wings w ON w.id = s.wing_id
+      ORDER BY COALESCE(w.sort, 999), w.name, s.sort, s.name COLLATE NOCASE`,
+  ).all<any>()
+  const groups = [
+    ...wings.map((w) => ({ wing: w, rows: results.filter((r) => r.wing_id === w.id) })),
+    ...(results.some((r) => r.wing_id == null) ? [{ wing: null, rows: results.filter((r) => r.wing_id == null) }] : []),
+  ]
+  const WingSelect = (p: { value: number | null }) => (
+    <select name="wing_id" aria-label="Wing">
+      {wings.map((w) => <option value={String(w.id)} selected={p.value === w.id}>{w.name}</option>)}
+    </select>
+  )
+
   return page(c, 'Sections',
     <>
-      <PageHead title="Sections / Departments" sub="Assign a Section Head from the teacher's page (Account & permissions)." />
-      <section class="card narrow">
-        <form method="post" action="/admin/sections" class="inline-form">
-          <input name="name" required maxlength={60} placeholder="New section name, e.g. Primary" />
-          <button class="btn btn-primary btn-sm">Add section</button>
-        </form>
-      </section>
-      <div class="card table-wrap">
-        {results.length === 0 ? <Empty>No sections yet. Add your first section above.</Empty> : (
-          <table class="table">
-            <thead><tr><th>Section</th><th>Section Head(s)</th><th class="num">Active members</th><th></th></tr></thead>
-            <tbody>
-              {results.map((s) => (
-                <tr>
-                  <td>
-                    <form method="post" action={`/admin/sections/${s.id}`} class="inline-form">
-                      <input name="name" value={s.name} required maxlength={60} />
-                      <button class="btn btn-sm">Rename</button>
-                    </form>
-                  </td>
-                  <td>{s.heads ?? <span class="muted">—</span>}</td>
-                  <td class="num"><a href={`/admin/teachers?section=${s.id}`}>{s.members}</a></td>
-                  <td>
-                    <form method="post" action={`/admin/sections/${s.id}/delete`} data-confirm={`Delete section "${s.name}"? Its teachers will be removed from it.`}>
-                      <button class="btn btn-sm btn-demerit">Delete</button>
-                    </form>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <PageHead title="Wings & Sections" sub="Principal → Wing → Section (each with a Section Head) → Teachers. Assign a Section Head from the teacher's page (Account & permissions)." />
+
+      <div class="grid-2">
+        <section class="card">
+          <h2>Add a section</h2>
+          <form method="post" action="/admin/sections" class="stack">
+            <div class="form-grid">
+              <label>Section name<input name="name" required maxlength={60} placeholder="e.g. Junior" /></label>
+              <label>Classes<input name="grades" maxlength={60} placeholder="e.g. Nursery – 2nd" /></label>
+            </div>
+            <label>Wing<WingSelect value={wings.find((w) => w.active)?.id ?? null} /></label>
+            <button class="btn btn-primary btn-sm">Add section</button>
+          </form>
+        </section>
+        <section class="card">
+          <h2>Wings</h2>
+          <ul class="wing-list">
+            {wings.map((w) => (
+              <li>
+                <form method="post" action={`/admin/wings/${w.id}`} class="inline-form">
+                  <input name="name" value={w.name} required maxlength={60} />
+                  <label class="check"><input type="checkbox" name="active" value="1" checked={!!w.active} /> Active</label>
+                  <button class="btn btn-sm">Save</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+          <p class="hint">An inactive wing is shown as "in development": its sections are not offered when choosing sections.</p>
+          <form method="post" action="/admin/wings" class="inline-form" style="margin-top:12px">
+            <input name="name" required maxlength={60} placeholder="New wing name" />
+            <button class="btn btn-sm">Add wing</button>
+          </form>
+        </section>
       </div>
+
+      {groups.map(({ wing, rows }) => (
+        <section class="card">
+          <div class="card-head">
+            <h2>{wing ? wing.name : 'Not in a wing'} {wing && !wing.active ? <span class="pill pill-pending">In development</span> : null}</h2>
+            {wing ? <a href={`/admin/teachers?section=w${wing.id}`}>Teachers in {wing.name}</a> : null}
+          </div>
+          {rows.length === 0 ? <Empty>{wing && !wing.active ? `${wing.name} will be developed later. Add its sections when ready.` : 'No sections yet.'}</Empty> : (
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>Section · classes · wing</th><th>Section Head(s)</th><th class="num">Members</th><th></th></tr></thead>
+                <tbody>
+                  {rows.map((s: any) => (
+                    <tr>
+                      <td>
+                        <form method="post" action={`/admin/sections/${s.id}`} class="inline-form">
+                          <input name="name" value={s.name} required maxlength={60} aria-label="Section name" />
+                          <input name="grades" value={s.grades ?? ''} maxlength={60} placeholder="Classes" aria-label="Classes" />
+                          <WingSelect value={s.wing_id} />
+                          <button class="btn btn-sm">Save</button>
+                        </form>
+                      </td>
+                      <td>{s.heads ?? <span class="muted">No head yet</span>}</td>
+                      <td class="num"><a href={`/admin/teachers?section=${s.id}`}>{s.members}</a></td>
+                      <td>
+                        <form method="post" action={`/admin/sections/${s.id}/delete`} data-confirm={`Delete section "${s.name}"? Its teachers will be removed from it.`}>
+                          <button class="btn btn-sm btn-demerit">Delete</button>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ))}
     </>,
   )
 })
 
+async function wingIdFrom(env: Env, raw: unknown): Promise<number | null> {
+  const id = Number(raw)
+  if (!Number.isInteger(id) || id <= 0) return null
+  return (await env.DB.prepare('SELECT id FROM wings WHERE id = ?').bind(id).first<{ id: number }>())?.id ?? null
+}
+
 app.post('/sections', async (c) => {
-  const name = str((await c.req.parseBody()).name, 60)
+  const body = await c.req.parseBody()
+  const name = str(body.name, 60)
   if (!name) return back(c, '/admin/sections', 'err', 'Name is required.')
-  const res = await c.env.DB.prepare('INSERT OR IGNORE INTO sections (name) VALUES (?)').bind(name).run()
+  const res = await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO sections (name, grades, wing_id, sort) VALUES (?, ?, ?, (SELECT COALESCE(MAX(sort), 0) + 1 FROM sections))`,
+  ).bind(name, str(body.grades, 60) || null, await wingIdFrom(c.env, body.wing_id)).run()
   return back(c, '/admin/sections', res.meta.changes ? 'ok' : 'err', res.meta.changes ? `Section "${name}" added.` : 'A section with that name already exists.')
 })
 
 app.post('/sections/:id', async (c) => {
-  const name = str((await c.req.parseBody()).name, 60)
+  const body = await c.req.parseBody()
+  const name = str(body.name, 60)
   if (!name) return back(c, '/admin/sections', 'err', 'Name is required.')
   try {
-    await c.env.DB.prepare('UPDATE sections SET name = ? WHERE id = ?').bind(name, Number(c.req.param('id'))).run()
+    await c.env.DB.prepare('UPDATE sections SET name = ?, grades = ?, wing_id = ? WHERE id = ?')
+      .bind(name, str(body.grades, 60) || null, await wingIdFrom(c.env, body.wing_id), Number(c.req.param('id'))).run()
   } catch {
     return back(c, '/admin/sections', 'err', 'A section with that name already exists.')
   }
-  return back(c, '/admin/sections', 'ok', 'Section renamed.')
+  return back(c, '/admin/sections', 'ok', 'Section saved.')
 })
 
 app.post('/sections/:id/delete', async (c) => {
@@ -435,6 +510,25 @@ app.post('/sections/:id/delete', async (c) => {
     c.env.DB.prepare('UPDATE users SET section_id = (SELECT MIN(section_id) FROM user_sections us WHERE us.user_id = users.id) WHERE section_id IS NULL OR section_id = ?').bind(id),
   ])
   return back(c, '/admin/sections', 'ok', 'Section deleted.')
+})
+
+app.post('/wings', async (c) => {
+  const name = str((await c.req.parseBody()).name, 60)
+  if (!name) return back(c, '/admin/sections', 'err', 'Wing name is required.')
+  const res = await c.env.DB.prepare('INSERT OR IGNORE INTO wings (name, active, sort) VALUES (?, 1, (SELECT COALESCE(MAX(sort), 0) + 1 FROM wings))').bind(name).run()
+  return back(c, '/admin/sections', res.meta.changes ? 'ok' : 'err', res.meta.changes ? `Wing "${name}" added.` : 'A wing with that name already exists.')
+})
+
+app.post('/wings/:id', async (c) => {
+  const body = await c.req.parseBody()
+  const name = str(body.name, 60)
+  if (!name) return back(c, '/admin/sections', 'err', 'Wing name is required.')
+  try {
+    await c.env.DB.prepare('UPDATE wings SET name = ?, active = ? WHERE id = ?').bind(name, body.active === '1' ? 1 : 0, Number(c.req.param('id'))).run()
+  } catch {
+    return back(c, '/admin/sections', 'err', 'A wing with that name already exists.')
+  }
+  return back(c, '/admin/sections', 'ok', 'Wing saved.')
 })
 
 // ---------- announcements ----------
