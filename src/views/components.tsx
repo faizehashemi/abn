@@ -1,4 +1,4 @@
-import type { LeaveRow, PointRow, Section, User } from '../types'
+import type { LeaveRow, PointRow, Section, User, Wing } from '../types'
 import { ATTENDANCE, ATT_CODE, ATT_LABEL, daysInMonth, fmtDate, fmtMonth, shiftMonth, weekdayMon0 } from '../lib/util'
 import { byWing, type AttendanceTotals } from '../lib/queries'
 import { Empty, StatusPill } from './layout'
@@ -265,5 +265,21 @@ export function ProfileForm(props: { user: User; sections: Section[]; mode: Prof
         <button class="btn btn-primary" type="submit">{props.mode === 'complete' ? 'Complete Profile' : 'Save changes'}</button>
       </div>
     </form>
+  )
+}
+
+// ---------- role picker (teacher / two head levels / principal) ----------
+
+/** <option>s for a role <select>. Head levels are labelled with each wing's titles, e.g. "Mas'ool Awwal / Section Head". */
+export function RoleOptions(props: { wings: Wing[]; selected?: string; principal?: boolean }) {
+  const titles = (key: 'head_title' | 'deputy_title') => [...new Set(props.wings.map((w) => w[key]))].join(' / ')
+  const sel = props.selected ?? 'teacher'
+  return (
+    <>
+      <option value="teacher" selected={sel === 'teacher'}>Teacher</option>
+      <option value="head" selected={sel === 'head'}>1st in charge · {titles('head_title') || 'Section Head'}</option>
+      <option value="head2" selected={sel === 'head2'}>2nd in charge · {titles('deputy_title') || 'Deputy Section Head'}</option>
+      {props.principal ? <option value="coordinator" selected={sel === 'coordinator'}>Principal (full access)</option> : null}
+    </>
   )
 }

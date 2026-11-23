@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
 import type { AppEnv, Env, PointRow, User } from '../types'
 import { page, PageHead, Avatar, Empty, StatusPill } from '../views/layout'
-import { ProfileForm, SectionChecks, SectionSelect, sectionLabel } from '../views/components'
-import { USER_SELECT, getUserById, hydrateUser, requireRole } from '../lib/auth'
+import { ProfileForm, RoleOptions, SectionChecks, SectionSelect } from '../views/components'
+import { USER_SELECT, getUserById, hydrateUser, parseRoleChoice, requireRole, roleLabel } from '../lib/auth'
 import { defaultPassword, hashPassword } from '../lib/crypto'
-import { SECTION_NAMES_SQL, byWing, inSections, listSections, listWings, parseSectionFilter, scoreboard, setUserSections, validSectionIds } from '../lib/queries'
+import { SECTION_NAMES_SQL, headTitleSql, inSections, listSections, listWings, parseSectionFilter, scoreboard, setUserSections, validSectionIds } from '../lib/queries'
 import { idList, one, saveProfile } from '../lib/profile'
 import { LeaveQueue, pendingLeave } from './leave'
 import { sendMails, wrapHtml, escapeHtml, emailProvider } from '../lib/email'
@@ -39,12 +39,13 @@ export async function notifyPointsApproved(env: Env, ids: number[]) {
 
 app.get('/approvals', async (c) => {
   const sections = await listSections(c.env)
+  const wings = await listWings(c.env)
   const users = (await c.env.DB.prepare(`${USER_SELECT} WHERE u.status = 'pending' ORDER BY u.created_at`).all<any>()).results.map((r) => hydrateUser(r))
   const { results: pts } = await c.env.DB.prepare(
-    `SELECT p.*, u.full_name AS teacher_name, u.its AS teacher_its, r.full_name AS requester_name, ${SECTION_NAMES_SQL} AS section_name
+    `SELECT p.*, u.full_name AS teacher_name, u.its AS teacher_its, r.full_name AS requester_name, r.role AS requester_role, r.head_level AS requester_level, ${headTitleSql('r')} AS requester_title, ${SECTION_NAMES_SQL} AS section_name
        FROM points p JOIN users u ON u.id = p.teacher_id JOIN users r ON r.id = p.requested_by
       WHERE p.status = 'pending' ORDER BY p.created_at`,
-  ).all<PointRow>()
+  ).all<PointRow & { requester_role: string; requester_level: string | null; requester_title: string | null }>()
   const leave = await pendingLeave(c.env)
   const tz = c.env.TIMEZONE
 
@@ -64,8 +65,7 @@ app.get('/approvals', async (c) => {
                 <form method="post" action={`/admin/users/${u.id}/approve`} class="inline-form approve-form">
                   <SectionChecks sections={sections} selected={u.section_ids} />
                   <select name="role" aria-label="Role">
-                    <option value="teacher">Teacher</option>
-                    <option value="head">Section Head</option>
+                    <RoleOptions wings={wings} />
                   </select>
                   <button class="btn btn-sm btn-merit">Approve</button>
                 </form>
@@ -96,7 +96,7 @@ app.get('/approvals', async (c) => {
                 <span class={`point-amount ${p.kind}`}>{p.kind === 'merit' ? '+' : '−'}{p.points}</span>
                 <div class="grow">
                   <div>
-                    Section Head <b>{p.requester_name}</b> wants to give <b>{p.kind === 'merit' ? '+' : '−'}{p.points} {p.kind === 'merit' ? 'Merit' : 'Demerit'}</b> to{' '}
+                    {roleLabel({ role: p.requester_role, head_level: p.requester_level, head_title: p.requester_title })} <b>{p.requester_name}</b> wants to give <b>{p.kind === 'merit' ? '+' : '−'}{p.points} {p.kind === 'merit' ? 'Merit' : 'Demerit'}</b> to{' '}
                     <a href={`/teachers/${p.teacher_id}`}><b>{p.teacher_name}</b></a> for <i>{p.reason}</i>
                   </div>
                   <div class="muted small">{p.section_name ?? 'No section'} · event on {fmtDate(p.event_date)} · requested {fmtDateTime(p.created_at, tz)}</div>
@@ -123,10 +123,10 @@ app.post('/users/:id/approve', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.parseBody({ all: true })
   const sectionIds = await validSectionIds(c.env, idList(body, 'section_ids'))
-  const role = one(body, 'role') === 'head' ? 'head' : 'teacher'
+  const { role, head_level } = parseRoleChoice(one(body, 'role'))
   const res = await c.env.DB.prepare(
-    `UPDATE users SET status = 'active', role = ?, approved_at = datetime('now'), approved_by = ? WHERE id = ? AND status = 'pending'`,
-  ).bind(role, me.id, id).run()
+    `UPDATE users SET status = 'active', role = ?, head_level = ?, approved_at = datetime('now'), approved_by = ? WHERE id = ? AND status = 'pending'`,
+  ).bind(role, head_level, me.id, id).run()
   if (res.meta.changes) await c.env.DB.batch(setUserSections(c.env, id, sectionIds))
   return back(c, '/admin/approvals', res.meta.changes ? 'ok' : 'err', res.meta.changes ? 'Teacher approved. They can now log in.' : 'Request not found.')
 })
@@ -195,7 +195,7 @@ app.get('/teachers', async (c) => {
                     <td class="who-cell"><Avatar id={u.id} name={u.full_name} photo={u.photo_key} size={30} /><a href={`/teachers/${u.id}`}>{u.full_name}</a></td>
                     <td>{u.its}</td>
                     <td>{u.section_name ?? '—'}</td>
-                    <td>{u.role === 'head' ? <span class="pill pill-head">Section Head{u.attendance_scope !== 'none' ? ' · Att.' : ''}</span> : 'Teacher'}</td>
+                    <td>{u.role === 'head' ? <span class="pill pill-head">{roleLabel(u)}{u.attendance_scope !== 'none' ? ' · Att.' : ''}</span> : 'Teacher'}</td>
                     <td>{u.profile_complete ? <span class="pill pill-approved">Complete</span> : u.consent_at ? <span class="pill pill-pending">Profile pending</span> : <span class="pill pill-pending">Not consented</span>}</td>
                     <td class="num">{s ? <b>{s.score}</b> : '—'}</td>
                   </tr>
@@ -222,6 +222,7 @@ app.get('/teachers/export', async (c) => {
 
 app.get('/teachers/new', async (c) => {
   const sections = await listSections(c.env)
+  const wings = await listWings(c.env)
   return page(c, 'Add teachers',
     <>
       <PageHead title="Add teachers" sub="Teachers added here skip the approval queue. They log in with their ITS number and first name as password." />
@@ -236,18 +237,18 @@ app.get('/teachers/new', async (c) => {
               <SectionChecks sections={sections} selected={[]} />
             </fieldset>
             <label>Role
-              <select name="role"><option value="teacher">Teacher</option><option value="head">Section Head</option></select>
+              <select name="role"><RoleOptions wings={wings} /></select>
             </label>
             <button class="btn btn-primary">Add teacher</button>
           </form>
         </section>
         <section class="card">
           <h2>Bulk import (CSV)</h2>
-          <p class="muted small">One teacher per line: <code>ITS,Full Name,Section,Role</code>. Section and Role are optional; for several sections separate them with <code>;</code> (e.g. <code>Primary;Secondary</code>). Unknown sections are created automatically. Role is <code>teacher</code> or <code>head</code>. A header row is ignored.</p>
+          <p class="muted small">One teacher per line: <code>ITS,Full Name,Section,Role</code>. Section and Role are optional; Role is <code>teacher</code>, <code>awwal</code> (1st in charge) or <code>saani</code> (2nd in charge); for several sections separate them with <code>;</code> (e.g. <code>Hifz Stage 1;Hifz Stage 2</code>). Unknown sections are created automatically. A header row is ignored.</p>
           <form method="post" action="/admin/teachers/import" enctype="multipart/form-data" class="stack">
             <label>CSV file<input type="file" name="file" accept=".csv,text/csv" /></label>
             <label>…or paste rows
-              <textarea name="text" rows={7} placeholder={'30412345,M Huzaifa Master,Primary;Secondary,teacher\n30498765,M Taha Kamlapur,Secondary,head'}></textarea>
+              <textarea name="text" rows={7} placeholder={'30412345,M Huzaifa Master,Hadi ashar,awwal\n30498765,M Taha Kamlapur,Hadi ashar;awwala alif,saani\n30411111,M Mustafa Kapadia,awwala alif,teacher'}></textarea>
             </label>
             <button class="btn btn-primary">Import</button>
           </form>
@@ -257,7 +258,16 @@ app.get('/teachers/new', async (c) => {
   )
 })
 
-async function addTeacher(env: Env, approverId: number, its: string, fullName: string, sectionIds: number[], role: 'teacher' | 'head'): Promise<string | null> {
+/** CSV role column: teacher | head / awwal | deputy / saani. */
+function csvRole(v: string): string {
+  const r = v.trim().toLowerCase().replace(/[^a-z]/g, '')
+  if (r === 'head' || r === 'awwal' || r === 'masoolawwal') return 'head'
+  if (r === 'deputy' || r === 'saani' || r === 'masoolsaani' || r === 'head2') return 'head2'
+  return 'teacher'
+}
+
+async function addTeacher(env: Env, approverId: number, its: string, fullName: string, sectionIds: number[], choice: string): Promise<string | null> {
+  const { role, head_level } = parseRoleChoice(choice)
   if (!ITS_RE.test(its)) return `${its || '(blank)'}: ITS must be 8 digits`
   if (fullName.length < 3) return `${its}: name is required`
   const exists = await env.DB.prepare('SELECT status FROM users WHERE its = ?').bind(its).first<{ status: string }>()
@@ -265,12 +275,12 @@ async function addTeacher(env: Env, approverId: number, its: string, fullName: s
   const hash = await hashPassword(defaultPassword(fullName, its))
   if (exists) {
     await env.DB.prepare(
-      `UPDATE users SET full_name = ?, role = ?, password_hash = ?, using_default_password = 1, status = 'active', approved_at = datetime('now'), approved_by = ? WHERE its = ?`,
-    ).bind(fullName, role, hash, approverId, its).run()
+      `UPDATE users SET full_name = ?, role = ?, head_level = ?, password_hash = ?, using_default_password = 1, status = 'active', approved_at = datetime('now'), approved_by = ? WHERE its = ?`,
+    ).bind(fullName, role, head_level, hash, approverId, its).run()
   } else {
     await env.DB.prepare(
-      `INSERT INTO users (its, full_name, role, password_hash, status, approved_at, approved_by) VALUES (?, ?, ?, ?, 'active', datetime('now'), ?)`,
-    ).bind(its, fullName, role, hash, approverId).run()
+      `INSERT INTO users (its, full_name, role, head_level, password_hash, status, approved_at, approved_by) VALUES (?, ?, ?, ?, ?, 'active', datetime('now'), ?)`,
+    ).bind(its, fullName, role, head_level, hash, approverId).run()
   }
   const user = await env.DB.prepare('SELECT id FROM users WHERE its = ?').bind(its).first<{ id: number }>()
   await env.DB.batch(setUserSections(env, user!.id, sectionIds))
@@ -282,7 +292,7 @@ app.post('/teachers/new', async (c) => {
   const its = str(one(body, 'its'), 20)
   const name = str(one(body, 'full_name'), 100).replace(/\s+/g, ' ')
   const sectionIds = await validSectionIds(c.env, idList(body, 'section_ids'))
-  const err = await addTeacher(c.env, c.get('user').id, its, name, sectionIds, one(body, 'role') === 'head' ? 'head' : 'teacher')
+  const err = await addTeacher(c.env, c.get('user').id, its, name, sectionIds, String(one(body, 'role') ?? 'teacher'))
   if (err) return back(c, '/admin/teachers/new', 'err', err)
   return back(c, '/admin/teachers/new', 'ok', `${name} added. Login: ${its} / ${defaultPassword(name, its)}`)
 })
@@ -309,7 +319,7 @@ app.post('/teachers/import', async (c) => {
       }
       sectionIds.push(sectionId)
     }
-    const err = await addTeacher(c.env, c.get('user').id, its, name.replace(/\s+/g, ' '), sectionIds, role.toLowerCase() === 'head' ? 'head' : 'teacher')
+    const err = await addTeacher(c.env, c.get('user').id, its, name.replace(/\s+/g, ' '), sectionIds, csvRole(role))
     if (err) errors.push(err); else added++
   }
   const msg = `Imported ${added} teacher${added === 1 ? '' : 's'}.` + (errors.length ? ` Skipped ${errors.length}: ${errors.slice(0, 5).join('; ')}${errors.length > 5 ? '…' : ''}` : '')
@@ -322,12 +332,12 @@ app.post('/teachers/:id/access', async (c) => {
   if (!target || target.role === 'coordinator') return c.notFound()
   const raw = await c.req.parseBody({ all: true })
   const body = Object.fromEntries(Object.keys(raw).map((k) => [k, one(raw, k)]))
-  const role = body.role === 'coordinator' ? 'coordinator' : body.role === 'head' ? 'head' : 'teacher'
+  const { role, head_level } = parseRoleChoice(body.role, true)
   const sectionIds = await validSectionIds(c.env, idList(raw, 'section_ids'))
   const scope = role === 'head' && (body.attendance_scope === 'section' || body.attendance_scope === 'all') ? body.attendance_scope : 'none'
   const status = body.status === 'disabled' ? 'disabled' : 'active'
   await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE users SET role = ?, attendance_scope = ?, status = ? WHERE id = ?').bind(role, scope, status, id),
+    c.env.DB.prepare('UPDATE users SET role = ?, head_level = ?, attendance_scope = ?, status = ? WHERE id = ?').bind(role, head_level, scope, status, id),
     ...setUserSections(c.env, id, sectionIds),
   ])
   if (status === 'disabled') await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run()
@@ -367,7 +377,7 @@ app.post('/principals/:id/remove', async (c) => {
   const id = Number(c.req.param('id'))
   const count = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'coordinator' AND status = 'active'`).first<{ n: number }>()
   if ((count?.n ?? 0) <= 1) return back(c, '/settings', 'err', 'There must always be at least one Principal.')
-  const res = await c.env.DB.prepare(`UPDATE users SET role = 'teacher' WHERE id = ? AND role = 'coordinator'`).bind(id).run()
+  const res = await c.env.DB.prepare(`UPDATE users SET role = 'teacher', head_level = NULL WHERE id = ? AND role = 'coordinator'`).bind(id).run()
   if (!res.meta.changes) return back(c, '/settings', 'err', 'Not found.')
   await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run()
   if (id === me.id) return c.redirect('/login', 303)
@@ -382,7 +392,11 @@ app.get('/sections', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT s.id, s.name, s.wing_id, s.grades, s.sort, w.name AS wing_name, w.active AS wing_active,
             (SELECT COUNT(*) FROM user_sections us JOIN users u ON u.id = us.user_id WHERE us.section_id = s.id AND u.status = 'active') AS members,
-            (SELECT GROUP_CONCAT(u.full_name, ', ') FROM user_sections us JOIN users u ON u.id = us.user_id WHERE us.section_id = s.id AND u.role = 'head' AND u.status = 'active') AS heads
+            (SELECT GROUP_CONCAT(label, ', ') FROM (
+               SELECT u.full_name || ' (' || CASE WHEN u.head_level = 'saani' THEN COALESCE(w.deputy_title, 'Deputy Section Head') ELSE COALESCE(w.head_title, 'Section Head') END || ')' AS label
+                 FROM user_sections us JOIN users u ON u.id = us.user_id
+                WHERE us.section_id = s.id AND u.role = 'head' AND u.status = 'active'
+                ORDER BY CASE WHEN u.head_level = 'saani' THEN 2 ELSE 1 END, u.full_name)) AS heads
        FROM sections s LEFT JOIN wings w ON w.id = s.wing_id
       ORDER BY COALESCE(w.sort, 999), w.name, s.sort, s.name COLLATE NOCASE`,
   ).all<any>()
@@ -398,7 +412,7 @@ app.get('/sections', async (c) => {
 
   return page(c, 'Sections',
     <>
-      <PageHead title="Wings & Sections" sub="Principal → Wing → Section (each with a Section Head) → Teachers. Assign a Section Head from the teacher's page (Account & permissions)." />
+      <PageHead title="Wings & Sections" sub="Principal → Wing → Section (1st and 2nd in charge, e.g. Mas'ool Awwal / Mas'ool Saani) → Teachers. Assign heads from the teacher's page (Account & permissions)." />
 
       <div class="grid-2">
         <section class="card">
@@ -418,9 +432,13 @@ app.get('/sections', async (c) => {
             {wings.map((w) => (
               <li>
                 <form method="post" action={`/admin/wings/${w.id}`} class="inline-form">
-                  <input name="name" value={w.name} required maxlength={60} />
+                  <input name="name" value={w.name} required maxlength={60} aria-label="Wing name" />
                   <label class="check"><input type="checkbox" name="active" value="1" checked={!!w.active} /> Active</label>
                   <button class="btn btn-sm">Save</button>
+                  <div class="title-row">
+                    <label>1st in charge title<input name="head_title" value={w.head_title} required maxlength={40} /></label>
+                    <label>2nd in charge title<input name="deputy_title" value={w.deputy_title} required maxlength={40} /></label>
+                  </div>
                 </form>
               </li>
             ))}
@@ -442,7 +460,7 @@ app.get('/sections', async (c) => {
           {rows.length === 0 ? <Empty>{wing && !wing.active ? `${wing.name} will be developed later. Add its sections when ready.` : 'No sections yet.'}</Empty> : (
             <div class="table-wrap">
               <table class="table">
-                <thead><tr><th>Section · classes · wing</th><th>Section Head(s)</th><th class="num">Members</th><th></th></tr></thead>
+                <thead><tr><th>Section · classes · wing</th><th>Heads</th><th class="num">Members</th><th></th></tr></thead>
                 <tbody>
                   {rows.map((s: any) => (
                     <tr>
@@ -524,7 +542,8 @@ app.post('/wings/:id', async (c) => {
   const name = str(body.name, 60)
   if (!name) return back(c, '/admin/sections', 'err', 'Wing name is required.')
   try {
-    await c.env.DB.prepare('UPDATE wings SET name = ?, active = ? WHERE id = ?').bind(name, body.active === '1' ? 1 : 0, Number(c.req.param('id'))).run()
+    await c.env.DB.prepare('UPDATE wings SET name = ?, active = ?, head_title = ?, deputy_title = ? WHERE id = ?')
+      .bind(name, body.active === '1' ? 1 : 0, str(body.head_title, 40) || 'Section Head', str(body.deputy_title, 40) || 'Deputy Section Head', Number(c.req.param('id'))).run()
   } catch {
     return back(c, '/admin/sections', 'err', 'A wing with that name already exists.')
   }

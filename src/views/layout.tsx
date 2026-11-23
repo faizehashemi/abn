@@ -4,7 +4,7 @@ import { raw } from 'hono/html'
 import type { AppEnv, User } from '../types'
 import { takeFlash, type Flash } from '../lib/util'
 import { pendingCounts } from '../lib/queries'
-import { attendanceScope } from '../lib/auth'
+import { attendanceScope, roleLabel } from '../lib/auth'
 import { nameWords } from '../lib/crypto'
 
 type NavItem = { href: string; label: string; badge?: number }
@@ -41,7 +41,6 @@ function navFor(user: User, pending: number): NavItem[] {
   return items
 }
 
-const ROLE_LABEL = { coordinator: 'Principal', head: 'Section Head', teacher: 'Teacher' } as const
 
 export function Shell(props: { title: string; children: Child; bare?: boolean; flash?: Flash | null; user?: User | null; nav?: NavItem[]; path?: string }) {
   const { title, children, user, nav, path, flash } = props
@@ -74,7 +73,7 @@ export function Shell(props: { title: string; children: Child; bare?: boolean; f
               </a>
               <div class="who">
                 <span class="who-name">{user.full_name}</span>
-                <span class="who-role">{ROLE_LABEL[user.role]}</span>
+                <span class="who-role">{roleLabel(user)}</span>
               </div>
             </header>
             <div class="frame">

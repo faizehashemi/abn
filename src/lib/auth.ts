@@ -2,13 +2,33 @@ import type { Context, MiddlewareHandler } from 'hono'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import type { AppEnv, Env, Role, User } from '../types'
 import { randomToken, sha256Hex } from './crypto'
-import { SECTION_IDS_SQL, SECTION_NAMES_SQL } from './queries'
+import { SECTION_IDS_SQL, SECTION_NAMES_SQL, headTitleSql } from './queries'
 import { parseIds } from './util'
 
 const COOKIE = 'abn_session'
 const SESSION_DAYS = 30
 
-export const USER_SELECT = `SELECT u.*, ${SECTION_NAMES_SQL} AS section_name, ${SECTION_IDS_SQL} AS section_ids_csv FROM users u`
+export const USER_SELECT = `SELECT u.*, ${SECTION_NAMES_SQL} AS section_name, ${SECTION_IDS_SQL} AS section_ids_csv, ${headTitleSql('u')} AS head_title FROM users u`
+
+/** "Principal", "Teacher", or the head's title (e.g. "Mas'ool Awwal", "Deputy Section Head"). */
+export function roleLabel(u: { role: string; head_level?: string | null; head_title?: string | null }): string {
+  if (u.role === 'coordinator') return 'Principal'
+  if (u.role !== 'head') return 'Teacher'
+  return u.head_title || (u.head_level === 'saani' ? 'Deputy Section Head' : 'Section Head')
+}
+
+/** Role picker value -> stored role + head level. "head" = first in charge, "head2" = second in charge. */
+export function parseRoleChoice(v: unknown, allowPrincipal = false): { role: Role; head_level: 'awwal' | 'saani' | null } {
+  if (v === 'coordinator' && allowPrincipal) return { role: 'coordinator', head_level: null }
+  if (v === 'head') return { role: 'head', head_level: 'awwal' }
+  if (v === 'head2') return { role: 'head', head_level: 'saani' }
+  return { role: 'teacher', head_level: null }
+}
+
+/** Current picker value for a user. */
+export function roleChoice(u: { role: string; head_level?: string | null }): string {
+  return u.role === 'head' ? (u.head_level === 'saani' ? 'head2' : 'head') : u.role
+}
 
 type UserRow = Omit<User, 'section_ids'> & { section_ids_csv: string | null }
 

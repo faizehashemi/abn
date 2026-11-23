@@ -9,6 +9,13 @@ export const SECTION_NAMES_SQL = `(SELECT GROUP_CONCAT(name, ', ') FROM (SELECT 
 /** "1,4" — all of a user's section ids. */
 export const SECTION_IDS_SQL = `(SELECT GROUP_CONCAT(section_id) FROM user_sections us WHERE us.user_id = u.id)`
 
+/** A head's title from the wing of their first section, e.g. "Mas'ool Awwal" / "Mas'ool Saani". */
+export function headTitleSql(alias = 'u'): string {
+  return `(SELECT CASE WHEN ${alias}.head_level = 'saani' THEN w.deputy_title ELSE w.head_title END
+             FROM user_sections us JOIN sections s ON s.id = us.section_id JOIN wings w ON w.id = s.wing_id
+            WHERE us.user_id = ${alias}.id ORDER BY w.sort LIMIT 1)`
+}
+
 /** SQL condition "u belongs to any of these sections" plus its bind values. */
 export function inSections(ids: number[]): { sql: string; args: number[] } {
   if (!ids.length) return { sql: '0', args: [] }
@@ -114,7 +121,7 @@ export async function listSections(env: Env): Promise<Section[]> {
 }
 
 export async function listWings(env: Env): Promise<Wing[]> {
-  const { results } = await env.DB.prepare('SELECT id, name, active, sort FROM wings ORDER BY sort, name').all<Wing>()
+  const { results } = await env.DB.prepare('SELECT id, name, active, sort, head_title, deputy_title FROM wings ORDER BY sort, name').all<Wing>()
   return results
 }
 

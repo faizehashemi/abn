@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import type { AppEnv, PointRow, User } from '../types'
 import { page, PageHead, Avatar, Empty, StatusPill } from '../views/layout'
-import { AttendanceCalendar, AttendanceSummary, PointsTable, ProfileForm, ScoreCards, SectionChecks } from '../views/components'
-import { canGivePoints, canViewTeacher, getUserById, requireRole } from '../lib/auth'
-import { attendanceCounts, listSections, scoreboard, teacherTotals } from '../lib/queries'
+import { AttendanceCalendar, AttendanceSummary, PointsTable, ProfileForm, RoleOptions, ScoreCards, SectionChecks } from '../views/components'
+import { roleChoice, roleLabel, canGivePoints, canViewTeacher, getUserById, requireRole } from '../lib/auth'
+import { attendanceCounts, listSections, listWings, scoreboard, teacherTotals } from '../lib/queries'
 import { back, currentMonth, fmtDate, isISODate, isMonth, monthBounds, str, todayISO } from '../lib/util'
 import { notifyPointsApproved } from './admin'
 
@@ -110,6 +110,7 @@ app.get('/teachers/:id', async (c) => {
   const records = Object.fromEntries(att.results.map((x) => [x.date, x.status]))
   const give = c.req.query('give') === 'demerit' ? 'demerit' : 'merit'
   const sections = isCoord ? await listSections(c.env) : []
+  const wings = isCoord ? await listWings(c.env) : []
 
   return page(c, t.full_name,
     <>
@@ -117,7 +118,7 @@ app.get('/teachers/:id', async (c) => {
         <Avatar id={t.id} name={t.full_name} photo={t.photo_key} size={84} />
         <div class="grow">
           <h1>{t.full_name}</h1>
-          <p class="muted">ITS {t.its} · {t.role === 'head' ? 'Section Head' : 'Teacher'} · {t.section_name ?? 'No section'} · <StatusPill status={t.status} /></p>
+          <p class="muted">ITS {t.its} · {roleLabel(t)} · {t.section_name ?? 'No section'} · <StatusPill status={t.status} /></p>
           <div class="kv-grid">
             <div><span>Phone</span>{t.phone ? <a href={`tel:${t.phone}`}>{t.phone}</a> : '—'}</div>
             <div><span>Email</span>{t.email ? <a href={`mailto:${t.email}`}>{t.email}</a> : '—'}</div>
@@ -169,16 +170,14 @@ app.get('/teachers/:id', async (c) => {
             <form method="post" action={`/admin/teachers/${t.id}/access`} class="form-grid">
               <label>Role
                 <select name="role">
-                  <option value="teacher" selected={t.role === 'teacher'}>Teacher</option>
-                  <option value="head" selected={t.role === 'head'}>Section Head</option>
-                  <option value="coordinator">Principal (full access)</option>
+                  <RoleOptions wings={wings} selected={roleChoice(t)} principal />
                 </select>
               </label>
               <fieldset class="span-2 fieldset">
                 <legend>Sections <span class="hint">a teacher can belong to several</span></legend>
                 <SectionChecks sections={sections} selected={t.section_ids} />
               </fieldset>
-              <label>Attendance rights (Section Heads)
+              <label>Attendance rights (heads)
                 <select name="attendance_scope">
                   <option value="none" selected={t.attendance_scope === 'none'}>None</option>
                   <option value="section" selected={t.attendance_scope === 'section'}>Own section(s)</option>

@@ -50,6 +50,8 @@ VALUES (${q(its)}, ${q(name)}, ${q(await hash(pw))}, ${q(role)}, 'active', ${sid
 for (const [its, name, sec] of pending) {
   lines.push(`INSERT OR IGNORE INTO users (its, full_name, password_hash, status, section_id) VALUES (${q(its)}, ${q(name)}, ${q(await hash(defaultPassword(name)))}, 'pending', ${sec ? sid(sec) : 'NULL'});`)
 }
+// Two head levels: 10000001 is 1st in charge (Mas'ool Awwal), 10000002 2nd in charge (Mas'ool Saani).
+lines.push(`UPDATE users SET head_level = CASE its WHEN '10000002' THEN 'saani' ELSE 'awwal' END WHERE role = 'head';`)
 // Sections live in user_sections; some teachers teach in two sections.
 lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, section_id FROM users WHERE section_id IS NOT NULL;`)
 lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, ${sid(2)} FROM users WHERE its IN ('10000001', '10000004');`)

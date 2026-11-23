@@ -38,6 +38,9 @@ export type User = {
   /** Comma-separated names of all the user's sections. */
   section_name?: string | null
   attendance_scope: AttendanceScope
+  head_level: HeadLevel | null
+  /** Title of a head from their wing, e.g. "Mas'ool Awwal" (hydrated). */
+  head_title?: string | null
   consent_at: string | null
   profile_complete: number
   phone: string | null
@@ -52,7 +55,9 @@ export type User = {
   approved_at: string | null
 }
 
-export type Wing = { id: number; name: string; active: number; sort: number }
+export type Wing = { id: number; name: string; active: number; sort: number; head_title: string; deputy_title: string }
+/** Section heads come in two levels: first in charge (awwal) and second in charge (saani). */
+export type HeadLevel = 'awwal' | 'saani'
 export type Section = { id: number; name: string; wing_id: number | null; wing_name: string | null; wing_active: number | null; grades: string | null }
 
 export type PointRow = {

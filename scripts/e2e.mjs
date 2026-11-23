@@ -252,6 +252,19 @@ r = await admin.post(`/admin/principals/${qid}/remove`, {})
 r = await admin.get('/settings')
 ok(!r.text.includes(`/admin/principals/${qid}/remove`), 'Principal access removed again')
 
+// 14. Head levels: Mas'ool Awwal (1st in charge) / Mas'ool Saani (2nd in charge) in Tahfeez
+const MA = /Mas(&#39;|')ool Awwal/, MS = /Mas(&#39;|')ool Saani/
+r = await head.get('/dashboard')
+ok(MA.test(r.text), "head 1st in charge shown as Mas'ool Awwal")
+r = await head2.get('/dashboard')
+ok(MS.test(r.text), "head 2nd in charge shown as Mas'ool Saani")
+r = await admin.get('/admin/sections')
+ok(MA.test(r.text) && MS.test(r.text), 'sections page lists heads with their titles')
+r = await admin.post(`/admin/teachers/${qid}/access`, [['role', 'head2'], ['section_ids', S1], ['attendance_scope', 'none'], ['status', 'active']])
+r = await admin.get(`/teachers/${qid}`)
+ok(MS.test(r.text.split('profile-head')[1] ?? ''), "teacher made 2nd in charge shows Mas'ool Saani")
+r = await admin.post(`/admin/teachers/${qid}/access`, [['role', 'teacher'], ['section_ids', S1], ['attendance_scope', 'none'], ['status', 'active']])
+
 // 9. CSRF guard
 r = await fetch(BASE + P + '/login', { method: 'POST', headers: { Origin: 'https://evil.example', 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'its=1&password=1', redirect: 'manual' })
 ok(r.status === 403, 'cross-site POST blocked')
