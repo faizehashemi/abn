@@ -9,7 +9,7 @@ import { idList, one, saveProfile } from '../lib/profile'
 import { LeaveQueue, pendingLeave } from './leave'
 import { sendMails, wrapHtml, escapeHtml, emailProvider } from '../lib/email'
 import { notifyAnnouncement } from '../lib/notify'
-import { ITS_RE, back, csvCell, fmtDate, fmtDateTime, parseCSV, str } from '../lib/util'
+import { EMAIL_RE, ITS_RE, back, csvCell, fmtDate, fmtDateTime, parseCSV, str } from '../lib/util'
 import { pickText } from './me'
 
 const app = new Hono<AppEnv>()
@@ -528,14 +528,36 @@ app.post('/policies', async (c) => {
 
 // ---------- email log ----------
 
+app.post('/email-log/test', async (c) => {
+  const to = str((await c.req.parseBody()).to, 120)
+  if (!EMAIL_RE.test(to)) return back(c, '/admin/email-log', 'err', 'Enter a valid email address.')
+  await sendMails(c.env, [{
+    to,
+    subject: 'Test email from the ABN Teacher Portal',
+    text: `This is a test email from ${c.env.APP_URL}. If you received it, email notifications are working.`,
+    html: wrapHtml(c.env, 'Email is working', '<p>This is a test email from the ABN Teacher Portal. If you received it, announcements, leave and merit notifications will be delivered.</p>'),
+  }])
+  const last = await c.env.DB.prepare('SELECT status, error FROM email_log WHERE to_addr = ? ORDER BY id DESC LIMIT 1').bind(to).first<{ status: string; error: string | null }>()
+  if (last?.status === 'sent') return back(c, '/admin/email-log', 'ok', `Test email sent to ${to}. Check the inbox (and spam folder).`)
+  if (last?.status === 'logged') return back(c, '/admin/email-log', 'err', 'Not sent: email delivery is not active yet (SMTP_PASS secret missing). It was only recorded below.')
+  return back(c, '/admin/email-log', 'err', `Sending failed: ${last?.error ?? 'unknown error'}`)
+})
+
 app.get('/email-log', async (c) => {
   const { results } = await c.env.DB.prepare('SELECT * FROM email_log ORDER BY id DESC LIMIT 300').all<any>()
   const provider = emailProvider(c.env)
   return page(c, 'Email Log',
     <>
       <PageHead title="Email Log" sub={provider === 'log'
-        ? 'Email delivery is not configured — messages are recorded here only. Add SMTP or Resend settings to send real emails.'
-        : `Delivering via ${provider.toUpperCase()}.`} />
+        ? `Email delivery is not active yet — messages are recorded here only.${c.env.SMTP_HOST ? ' SMTP is configured but the SMTP_PASS secret (Google App Password) has not been added.' : ''}`
+        : `Sending as ${c.env.MAIL_FROM || c.env.SMTP_USER} via ${provider === 'smtp' ? c.env.SMTP_HOST : 'Resend'}.`} />
+      <section class="card narrow">
+        <h2>Send a test email</h2>
+        <form method="post" action="/admin/email-log/test" class="inline-form">
+          <input type="email" name="to" required maxlength={120} value={c.get('user').email || c.env.MAIL_FROM || ''} placeholder="you@example.com" />
+          <button class="btn btn-primary btn-sm">Send test</button>
+        </form>
+      </section>
       <div class="card table-wrap">
         {results.length === 0 ? <Empty>No emails yet.</Empty> : (
           <table class="table">

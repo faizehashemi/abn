@@ -40,8 +40,13 @@
     "APP_URL": "https://raajsoftware.com/abn",
     "BASE_PATH": "/abn",
     "TIMEZONE": "Asia/Kolkata",
-    "MAIL_FROM": "",
-    "MAIL_FROM_NAME": "ABN Teacher Portal"
+    // Outgoing email: the school's Google Workspace mailbox via Gmail SMTP (STARTTLS).
+    // The password is NOT here — it is the Worker secret SMTP_PASS (a Google App Password).
+    "MAIL_FROM": "tahfeez@abnschoolindore.in",
+    "MAIL_FROM_NAME": "ABN Teacher Portal",
+    "SMTP_HOST": "smtp.gmail.com",
+    "SMTP_PORT": "587",
+    "SMTP_USER": "tahfeez@abnschoolindore.in"
   },
 
   // Daily clean-up of expired login sessions (02:00 IST).
