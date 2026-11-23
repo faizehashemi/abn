@@ -7,6 +7,7 @@ import meRoutes from './routes/me'
 import teacherRoutes from './routes/teachers'
 import adminRoutes from './routes/admin'
 import attendanceRoutes from './routes/attendance'
+import leaveRoutes from './routes/leave'
 import { page, PageHead } from './views/layout'
 
 const app = new Hono<AppEnv>()
@@ -23,6 +24,7 @@ app.route('/', meRoutes)
 app.route('/', teacherRoutes)
 app.route('/admin', adminRoutes)
 app.route('/attendance', attendanceRoutes)
+app.route('/leave', leaveRoutes)
 
 app.notFound((c) => (c.get('user')
   ? page(c, 'Not found', <><PageHead title="Page not found" /><p><a href="/dashboard">Back to dashboard</a></p></>, 404)

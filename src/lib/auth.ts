@@ -2,14 +2,26 @@ import type { Context, MiddlewareHandler } from 'hono'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import type { AppEnv, Env, Role, User } from '../types'
 import { randomToken, sha256Hex } from './crypto'
+import { SECTION_IDS_SQL, SECTION_NAMES_SQL } from './queries'
+import { parseIds } from './util'
 
 const COOKIE = 'abn_session'
 const SESSION_DAYS = 30
 
-export const USER_SELECT = `SELECT u.*, s.name AS section_name FROM users u LEFT JOIN sections s ON s.id = u.section_id`
+export const USER_SELECT = `SELECT u.*, ${SECTION_NAMES_SQL} AS section_name, ${SECTION_IDS_SQL} AS section_ids_csv FROM users u`
+
+type UserRow = Omit<User, 'section_ids'> & { section_ids_csv: string | null }
+
+export function hydrateUser(row: UserRow): User
+export function hydrateUser(row: UserRow | null): User | null
+export function hydrateUser(row: UserRow | null): User | null {
+  if (!row) return null
+  const { section_ids_csv, ...rest } = row
+  return { ...rest, section_ids: parseIds(section_ids_csv) }
+}
 
 export async function getUserById(env: Env, id: number): Promise<User | null> {
-  return env.DB.prepare(`${USER_SELECT} WHERE u.id = ?`).bind(id).first<User>()
+  return hydrateUser(await env.DB.prepare(`${USER_SELECT} WHERE u.id = ?`).bind(id).first<UserRow>())
 }
 
 export async function createSession(c: Context<AppEnv>, userId: number) {
@@ -40,9 +52,9 @@ async function sessionUser(c: Context<AppEnv>): Promise<User | null> {
     `${USER_SELECT} JOIN sessions se ON se.user_id = u.id WHERE se.token_hash = ? AND se.expires_at > ?`,
   )
     .bind(await sha256Hex(token), Math.floor(Date.now() / 1000))
-    .first<User>()
+    .first<UserRow>()
   if (!row || row.status !== 'active') return null
-  return row
+  return hydrateUser(row)
 }
 
 /** Rejects cross-site form posts (defence in depth on top of SameSite=Lax cookies). */
@@ -89,25 +101,30 @@ export async function currentUser(c: Context<AppEnv>): Promise<User | null> {
 export const isCoordinator = (u: User) => u.role === 'coordinator'
 export const isHead = (u: User) => u.role === 'head'
 
+/** Do two users share at least one section? */
+export function sharesSection(a: Pick<User, 'section_ids'>, b: Pick<User, 'section_ids'>): boolean {
+  return a.section_ids.some((id) => b.section_ids.includes(id))
+}
+
 /** Can `viewer` see the full record (profile, points history, attendance) of `target`? */
-export function canViewTeacher(viewer: User, target: Pick<User, 'id' | 'section_id'>): boolean {
+export function canViewTeacher(viewer: User, target: Pick<User, 'id' | 'section_ids'>): boolean {
   if (viewer.role === 'coordinator') return true
   if (viewer.id === target.id) return true
-  return viewer.role === 'head' && viewer.section_id != null && viewer.section_id === target.section_id
+  return viewer.role === 'head' && sharesSection(viewer, target)
 }
 
-/** Can `viewer` give merit/demerit to `target`? (Heads: own section, never themselves.) */
-export function canGivePoints(viewer: User, target: Pick<User, 'id' | 'section_id' | 'role'>): boolean {
+/** Can `viewer` give merit/demerit to `target`? (Heads: teachers in any of their sections, never themselves.) */
+export function canGivePoints(viewer: User, target: Pick<User, 'id' | 'section_ids' | 'role'>): boolean {
   if (target.role === 'coordinator' || viewer.id === target.id) return false
   if (viewer.role === 'coordinator') return true
-  return viewer.role === 'head' && viewer.section_id != null && viewer.section_id === target.section_id
+  return viewer.role === 'head' && sharesSection(viewer, target)
 }
 
-/** Which section's attendance a user may mark: 'all', a section id, or null (none). */
-export function attendanceScope(u: User): 'all' | number | null {
+/** Whose attendance a user may mark: 'all', a list of section ids, or null (none). */
+export function attendanceScope(u: User): 'all' | number[] | null {
   if (u.role === 'coordinator') return 'all'
   if (u.role !== 'head') return null
   if (u.attendance_scope === 'all') return 'all'
-  if (u.attendance_scope === 'section' && u.section_id != null) return u.section_id
+  if (u.attendance_scope === 'section' && u.section_ids.length) return u.section_ids
   return null
 }

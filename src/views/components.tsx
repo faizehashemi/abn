@@ -1,5 +1,6 @@
-import type { PointRow, Section, User } from '../types'
-import { daysInMonth, fmtDate, fmtMonth, shiftMonth, weekdayMon0 } from '../lib/util'
+import type { LeaveRow, PointRow, Section, User } from '../types'
+import { ATTENDANCE, ATT_CODE, ATT_LABEL, daysInMonth, fmtDate, fmtMonth, shiftMonth, weekdayMon0 } from '../lib/util'
+import type { AttendanceTotals } from '../lib/queries'
 import { Empty, StatusPill } from './layout'
 
 // ---------- score cards ----------
@@ -48,7 +49,6 @@ export function PointsTable(props: { rows: PointRow[]; showStatus?: boolean; sho
 
 // ---------- attendance calendar ----------
 
-const STATUS_SHORT: Record<string, string> = { present: 'P', absent: 'A', leave: 'L' }
 
 export function AttendanceCalendar(props: { month: string; records: Record<string, string>; baseUrl: string; today: string }) {
   const { month, records } = props
@@ -71,28 +71,29 @@ export function AttendanceCalendar(props: { month: string; records: Record<strin
           const iso = `${month}-${String(d).padStart(2, '0')}`
           const st = records[iso]
           return (
-            <div class={`cal-cell${st ? ` cal-${st}` : ''}${iso === props.today ? ' cal-today' : ''}`} title={st ? `${fmtDate(iso)}: ${st}` : fmtDate(iso)}>
+            <div class={`cal-cell${st ? ` cal-${st}` : ''}${iso === props.today ? ' cal-today' : ''}`} title={st ? `${fmtDate(iso)}: ${ATT_LABEL[st]}` : fmtDate(iso)}>
               <span class="cal-day">{d}</span>
-              {st ? <span class="cal-status">{STATUS_SHORT[st]}</span> : null}
+              {st ? <span class="cal-status">{ATT_CODE[st]}</span> : null}
             </div>
           )
         })}
       </div>
       <div class="legend">
-        <span><i class="dot dot-present"></i>Present</span>
-        <span><i class="dot dot-absent"></i>Absent</span>
-        <span><i class="dot dot-leave"></i>Leave</span>
+        {ATTENDANCE.map((a) => <span><i class={`dot dot-${a.status}`}></i>{a.code} · {a.label}</span>)}
       </div>
     </div>
   )
 }
 
-export function AttendanceSummary(props: { present: number; absent: number; leave: number; label?: string }) {
+export function AttendanceSummary(props: AttendanceTotals & { label?: string }) {
   return (
-    <div class="stats stats-sm">
-      <div class="stat stat-present"><span class="stat-label">Present{props.label ? ` (${props.label})` : ''}</span><span class="stat-value">{props.present}</span></div>
-      <div class="stat stat-absent"><span class="stat-label">Absent</span><span class="stat-value">{props.absent}</span></div>
-      <div class="stat stat-leave"><span class="stat-label">Leave</span><span class="stat-value">{props.leave}</span></div>
+    <div class="stats stats-sm stats-att">
+      {ATTENDANCE.map((a, i) => (
+        <div class={`stat stat-${a.status}`}>
+          <span class="stat-label">{a.label} ({a.code}){i === 0 && props.label ? ` · ${props.label}` : ''}</span>
+          <span class="stat-value">{props[a.status]}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -101,11 +102,58 @@ export function attendanceSentence(records: Record<string, string>): string {
   const byStatus = (s: string) => Object.keys(records).filter((d) => records[d] === s).sort()
   const parts: string[] = []
   const absent = byStatus('absent')
-  const leave = byStatus('leave')
+  const cl = byStatus('casual_leave')
+  const ea = byStatus('eval_absent')
   if (absent.length) parts.push(`You were absent on ${absent.map(fmtDate).join(', ')}.`)
-  if (leave.length) parts.push(`You were on leave on ${leave.map(fmtDate).join(', ')}.`)
-  parts.push(`Total present this month: ${byStatus('present').length} day${byStatus('present').length === 1 ? '' : 's'}.`)
+  if (cl.length) parts.push(`Casual leave on ${cl.map(fmtDate).join(', ')}.`)
+  if (ea.length) parts.push(`Evaluation absent on ${ea.map(fmtDate).join(', ')}.`)
+  const present = byStatus('present').length
+  parts.push(`Total present this month: ${present} day${present === 1 ? '' : 's'}.`)
   return parts.join(' ')
+}
+
+// ---------- leave ----------
+
+export const LEAVE_LABEL: Record<string, string> = { casual_leave: 'Casual Leave (CL)', eval_absent: 'Evaluation Absent (EA)' }
+
+export function leaveDates(l: Pick<LeaveRow, 'start_date' | 'end_date'>): string {
+  return l.start_date === l.end_date ? fmtDate(l.start_date) : `${fmtDate(l.start_date)} – ${fmtDate(l.end_date)}`
+}
+
+/** "Who's away" list: approved leave overlapping a period. */
+export function AwayList(props: { rows: LeaveRow[]; today: string; empty: string }) {
+  if (!props.rows.length) return <Empty>{props.empty}</Empty>
+  return (
+    <ul class="away-list">
+      {props.rows.map((l) => {
+        const now = l.start_date <= props.today && l.end_date >= props.today
+        return (
+          <li class={now ? 'away-now' : ''}>
+            <span class={`code-chip code-${l.kind}`}>{ATT_CODE[l.kind]}</span>
+            <div class="grow">
+              <b>{l.teacher_name}</b>{l.section_name ? <span class="muted small"> · {l.section_name}</span> : null}
+              <div class="muted small">{leaveDates(l)}{now ? ' · away today' : ''}</div>
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+// ---------- section picker (multiple sections per teacher) ----------
+
+export function SectionChecks(props: { sections: Section[]; selected: number[]; name?: string }) {
+  if (!props.sections.length) return <p class="hint">No sections yet. The Main Coordinator adds them under Sections.</p>
+  return (
+    <div class="check-grid">
+      {props.sections.map((s) => (
+        <label class="check">
+          <input type="checkbox" name={props.name ?? 'section_ids'} value={String(s.id)} checked={props.selected.includes(s.id)} /> {s.name}
+        </label>
+      ))}
+    </div>
+  )
 }
 
 // ---------- profile form ----------
@@ -150,17 +198,17 @@ export function ProfileForm(props: { user: User; sections: Section[]; mode: Prof
         Email <span class="req">*</span>
         <input name="email" type="email" required maxlength={120} value={u.email ?? ''} />
       </label>
-      <label>
-        Section / Department <span class="req">*</span>
-        {lockCore ? (
+      {lockCore ? (
+        <label>
+          Section(s) / Department
           <input value={u.section_name ?? '—'} readonly disabled />
-        ) : (
-          <select name="section_id" required>
-            <option value="">— Select —</option>
-            {props.sections.map((s) => <option value={String(s.id)} selected={u.section_id === s.id}>{s.name}</option>)}
-          </select>
-        )}
-      </label>
+        </label>
+      ) : (
+        <fieldset class="span-2 fieldset">
+          <legend>Section(s) / Department <span class="req">*</span> <span class="hint">tick every section you teach in</span></legend>
+          <SectionChecks sections={props.sections} selected={u.section_ids} />
+        </fieldset>
+      )}
       <label>
         Date of Joining <span class="req">*</span>
         <input name="date_of_joining" type="date" required value={u.date_of_joining ?? ''} readonly={lockCore} />

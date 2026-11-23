@@ -48,6 +48,10 @@ VALUES (${q(its)}, ${q(name)}, ${q(await hash(pw))}, ${q(role)}, 'active', ${sec
 for (const [its, name, sec] of pending) {
   lines.push(`INSERT OR IGNORE INTO users (its, full_name, password_hash, status, section_id) VALUES (${q(its)}, ${q(name)}, ${q(await hash(defaultPassword(name)))}, 'pending', ${sec ?? 'NULL'});`)
 }
+// Sections live in user_sections; some teachers teach in two sections.
+lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, section_id FROM users WHERE section_id IS NOT NULL;`)
+lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, 2 FROM users WHERE its IN ('10000001', '10000004');`)
+lines.push(`INSERT OR IGNORE INTO user_sections (user_id, section_id) SELECT id, 3 FROM users WHERE its = '10000006';`)
 
 const coord = `(SELECT id FROM users WHERE role = 'coordinator' ORDER BY id LIMIT 1)`
 const uid = (its) => `(SELECT id FROM users WHERE its = '${its}')`
@@ -71,11 +75,15 @@ WHERE NOT EXISTS (SELECT 1 FROM points WHERE reason = ${q(reason)} AND teacher_i
 for (let d = 1; d <= 21; d++) {
   for (const [its] of people) {
     const r = (Number(its.slice(-2)) * 7 + d * 13) % 20
-    const status = r === 0 ? 'absent' : r === 1 ? 'leave' : 'present'
+    const status = r === 0 ? 'absent' : r === 1 ? 'casual_leave' : r === 2 ? 'eval_absent' : 'present'
     lines.push(`INSERT OR IGNORE INTO attendance (teacher_id, date, status, marked_by)
 SELECT ${uid(its)}, date('now', '-${d} days'), '${status}', ${coord} WHERE strftime('%w', date('now', '-${d} days')) != '0';`)
   }
 }
+// One pending leave application for the Coordinator to try out.
+lines.push(`INSERT INTO leave_requests (teacher_id, kind, start_date, end_date, reason)
+SELECT ${uid('10000005')}, 'casual_leave', date('now', '+3 days'), date('now', '+4 days'), 'Family function'
+WHERE NOT EXISTS (SELECT 1 FROM leave_requests);`)
 lines.push(`INSERT INTO announcements (title, body, important, created_by)
 SELECT 'Welcome to the new Teacher Portal', 'Assalamu Alaikum. All updates, attendance and merit records will now be shared here instead of WhatsApp. Please complete your profile and change your password from Settings.', 1, ${coord}
 WHERE NOT EXISTS (SELECT 1 FROM announcements) AND ${coord} IS NOT NULL;`)

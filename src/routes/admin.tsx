@@ -1,12 +1,14 @@
 import { Hono } from 'hono'
 import type { AppEnv, Env, PointRow, User } from '../types'
 import { page, PageHead, Avatar, Empty, StatusPill } from '../views/layout'
-import { ProfileForm } from '../views/components'
-import { USER_SELECT, getUserById, requireRole } from '../lib/auth'
+import { ProfileForm, SectionChecks } from '../views/components'
+import { USER_SELECT, getUserById, hydrateUser, requireRole } from '../lib/auth'
 import { defaultPassword, hashPassword } from '../lib/crypto'
-import { listSections, scoreboard } from '../lib/queries'
-import { saveProfile } from '../lib/profile'
+import { SECTION_NAMES_SQL, inSections, listSections, scoreboard, setUserSections, validSectionIds } from '../lib/queries'
+import { idList, one, saveProfile } from '../lib/profile'
+import { LeaveQueue, pendingLeave } from './leave'
 import { sendMails, wrapHtml, escapeHtml, emailProvider } from '../lib/email'
+import { notifyAnnouncement } from '../lib/notify'
 import { ITS_RE, back, csvCell, fmtDate, fmtDateTime, parseCSV, str } from '../lib/util'
 import { pickText } from './me'
 
@@ -33,32 +35,17 @@ export async function notifyPointsApproved(env: Env, ids: number[]) {
   }))
 }
 
-async function notifyAnnouncement(env: Env, id: number) {
-  const a = await env.DB.prepare('SELECT * FROM announcements WHERE id = ?').bind(id).first<{ title: string; body: string }>()
-  if (!a) return
-  const { results } = await env.DB.prepare(
-    `SELECT email, full_name FROM users WHERE status = 'active' AND role != 'coordinator' AND email IS NOT NULL AND email != ''`,
-  ).all<{ email: string; full_name: string }>()
-  await sendMails(env, results.map((u) => ({
-    to: u.email,
-    subject: 'New Important Update on Portal - Please check',
-    text: `Dear ${u.full_name},\n\nA new important update has been posted on the ABN Teacher Portal:\n\n${a.title}\n\n${a.body}\n\nPlease log in to check: ${env.APP_URL}/dashboard`,
-    html: wrapHtml(env, 'New Important Update on Portal', `<p>Dear ${escapeHtml(u.full_name)},</p><p>A new important update has been posted. Please check the portal.</p><div style="border-left:4px solid #b08d3c;padding:8px 14px;background:#faf7ef"><b>${escapeHtml(a.title)}</b><div style="white-space:pre-wrap;margin-top:6px">${escapeHtml(a.body)}</div></div>`),
-  })))
-  await env.DB.prepare('UPDATE announcements SET email_sent = ? WHERE id = ?').bind(results.length, id).run()
-}
-
 // ---------- approval queue ----------
 
 app.get('/approvals', async (c) => {
   const sections = await listSections(c.env)
-  const { results: users } = await c.env.DB.prepare(`${USER_SELECT} WHERE u.status = 'pending' ORDER BY u.created_at`).all<User>()
+  const users = (await c.env.DB.prepare(`${USER_SELECT} WHERE u.status = 'pending' ORDER BY u.created_at`).all<any>()).results.map((r) => hydrateUser(r))
   const { results: pts } = await c.env.DB.prepare(
-    `SELECT p.*, t.full_name AS teacher_name, t.its AS teacher_its, r.full_name AS requester_name, s.name AS section_name
-       FROM points p JOIN users t ON t.id = p.teacher_id JOIN users r ON r.id = p.requested_by
-       LEFT JOIN sections s ON s.id = t.section_id
+    `SELECT p.*, u.full_name AS teacher_name, u.its AS teacher_its, r.full_name AS requester_name, ${SECTION_NAMES_SQL} AS section_name
+       FROM points p JOIN users u ON u.id = p.teacher_id JOIN users r ON r.id = p.requested_by
       WHERE p.status = 'pending' ORDER BY p.created_at`,
   ).all<PointRow>()
+  const leave = await pendingLeave(c.env)
   const tz = c.env.TIMEZONE
 
   return page(c, 'Approvals',
@@ -74,11 +61,8 @@ app.get('/approvals', async (c) => {
                   <b>{u.full_name}</b> <span class="muted">· ITS {u.its}</span>
                   <div class="muted small">Requested {fmtDateTime(u.created_at, tz)}{u.section_name ? ` · wants ${u.section_name}` : ''}</div>
                 </div>
-                <form method="post" action={`/admin/users/${u.id}/approve`} class="inline-form">
-                  <select name="section_id" aria-label="Section">
-                    <option value="">Section…</option>
-                    {sections.map((s) => <option value={String(s.id)} selected={u.section_id === s.id}>{s.name}</option>)}
-                  </select>
+                <form method="post" action={`/admin/users/${u.id}/approve`} class="inline-form approve-form">
+                  <SectionChecks sections={sections} selected={u.section_ids} />
                   <select name="role" aria-label="Role">
                     <option value="teacher">Teacher</option>
                     <option value="head">Section Head</option>
@@ -128,6 +112,8 @@ app.get('/approvals', async (c) => {
           </div>
         )}
       </section>
+
+      <LeaveQueue rows={leave} tz={tz} />
     </>,
   )
 })
@@ -135,13 +121,13 @@ app.get('/approvals', async (c) => {
 app.post('/users/:id/approve', async (c) => {
   const me = c.get('user')
   const id = Number(c.req.param('id'))
-  const body = await c.req.parseBody()
-  const sectionId = Number(str(body.section_id, 10)) || null
-  const role = body.role === 'head' ? 'head' : 'teacher'
+  const body = await c.req.parseBody({ all: true })
+  const sectionIds = await validSectionIds(c.env, idList(body, 'section_ids'))
+  const role = one(body, 'role') === 'head' ? 'head' : 'teacher'
   const res = await c.env.DB.prepare(
-    `UPDATE users SET status = 'active', role = ?, section_id = COALESCE(?, section_id), approved_at = datetime('now'), approved_by = ?
-      WHERE id = ? AND status = 'pending'`,
-  ).bind(role, sectionId, me.id, id).run()
+    `UPDATE users SET status = 'active', role = ?, approved_at = datetime('now'), approved_by = ? WHERE id = ? AND status = 'pending'`,
+  ).bind(role, me.id, id).run()
+  if (res.meta.changes) await c.env.DB.batch(setUserSections(c.env, id, sectionIds))
   return back(c, '/admin/approvals', res.meta.changes ? 'ok' : 'err', res.meta.changes ? 'Teacher approved. They can now log in.' : 'Request not found.')
 })
 
@@ -175,7 +161,7 @@ app.get('/teachers', async (c) => {
   const status = ['active', 'pending', 'rejected', 'disabled'].includes(c.req.query('status') ?? '') ? c.req.query('status')! : 'active'
   const where: string[] = [`u.role != 'coordinator'`, 'u.status = ?']
   const args: unknown[] = [status]
-  if (sectionId) { where.push('u.section_id = ?'); args.push(sectionId) }
+  if (sectionId) { const f = inSections([sectionId]); where.push(f.sql); args.push(...f.args) }
   if (q) { where.push('(u.full_name LIKE ? OR u.its LIKE ?)'); args.push(`%${q}%`, `%${q}%`) }
   const { results } = await c.env.DB.prepare(`${USER_SELECT} WHERE ${where.join(' AND ')} ORDER BY u.full_name COLLATE NOCASE`).bind(...args).all<User>()
   const scores = new Map((await scoreboard(c.env)).map((r) => [r.id, r]))
@@ -247,12 +233,10 @@ app.get('/teachers/new', async (c) => {
           <form method="post" action="/admin/teachers/new" class="stack">
             <label>ITS Number<input name="its" required pattern="\d{8}" maxlength={8} inputmode="numeric" /></label>
             <label>Full Name<input name="full_name" required minlength={3} maxlength={100} /></label>
-            <label>Section
-              <select name="section_id">
-                <option value="">— None —</option>
-                {sections.map((s) => <option value={String(s.id)}>{s.name}</option>)}
-              </select>
-            </label>
+            <fieldset class="fieldset">
+              <legend>Section(s)</legend>
+              <SectionChecks sections={sections} selected={[]} />
+            </fieldset>
             <label>Role
               <select name="role"><option value="teacher">Teacher</option><option value="head">Section Head</option></select>
             </label>
@@ -261,11 +245,11 @@ app.get('/teachers/new', async (c) => {
         </section>
         <section class="card">
           <h2>Bulk import (CSV)</h2>
-          <p class="muted small">One teacher per line: <code>ITS,Full Name,Section,Role</code>. Section and Role are optional; unknown sections are created automatically. Role is <code>teacher</code> or <code>head</code>. A header row is ignored.</p>
+          <p class="muted small">One teacher per line: <code>ITS,Full Name,Section,Role</code>. Section and Role are optional; for several sections separate them with <code>;</code> (e.g. <code>Primary;Secondary</code>). Unknown sections are created automatically. Role is <code>teacher</code> or <code>head</code>. A header row is ignored.</p>
           <form method="post" action="/admin/teachers/import" enctype="multipart/form-data" class="stack">
             <label>CSV file<input type="file" name="file" accept=".csv,text/csv" /></label>
             <label>…or paste rows
-              <textarea name="text" rows={7} placeholder={'30412345,M Huzaifa Master,Primary,teacher\n30498765,M Taha Kamlapur,Secondary,head'}></textarea>
+              <textarea name="text" rows={7} placeholder={'30412345,M Huzaifa Master,Primary;Secondary,teacher\n30498765,M Taha Kamlapur,Secondary,head'}></textarea>
             </label>
             <button class="btn btn-primary">Import</button>
           </form>
@@ -275,7 +259,7 @@ app.get('/teachers/new', async (c) => {
   )
 })
 
-async function addTeacher(env: Env, approverId: number, its: string, fullName: string, sectionId: number | null, role: 'teacher' | 'head'): Promise<string | null> {
+async function addTeacher(env: Env, approverId: number, its: string, fullName: string, sectionIds: number[], role: 'teacher' | 'head'): Promise<string | null> {
   if (!ITS_RE.test(its)) return `${its || '(blank)'}: ITS must be 8 digits`
   if (fullName.length < 3) return `${its}: name is required`
   const exists = await env.DB.prepare('SELECT status FROM users WHERE its = ?').bind(its).first<{ status: string }>()
@@ -283,22 +267,24 @@ async function addTeacher(env: Env, approverId: number, its: string, fullName: s
   const hash = await hashPassword(defaultPassword(fullName, its))
   if (exists) {
     await env.DB.prepare(
-      `UPDATE users SET full_name = ?, section_id = ?, role = ?, password_hash = ?, using_default_password = 1, status = 'active', approved_at = datetime('now'), approved_by = ? WHERE its = ?`,
-    ).bind(fullName, sectionId, role, hash, approverId, its).run()
+      `UPDATE users SET full_name = ?, role = ?, password_hash = ?, using_default_password = 1, status = 'active', approved_at = datetime('now'), approved_by = ? WHERE its = ?`,
+    ).bind(fullName, role, hash, approverId, its).run()
   } else {
     await env.DB.prepare(
-      `INSERT INTO users (its, full_name, section_id, role, password_hash, status, approved_at, approved_by) VALUES (?, ?, ?, ?, ?, 'active', datetime('now'), ?)`,
-    ).bind(its, fullName, sectionId, role, hash, approverId).run()
+      `INSERT INTO users (its, full_name, role, password_hash, status, approved_at, approved_by) VALUES (?, ?, ?, ?, 'active', datetime('now'), ?)`,
+    ).bind(its, fullName, role, hash, approverId).run()
   }
+  const user = await env.DB.prepare('SELECT id FROM users WHERE its = ?').bind(its).first<{ id: number }>()
+  await env.DB.batch(setUserSections(env, user!.id, sectionIds))
   return null
 }
 
 app.post('/teachers/new', async (c) => {
-  const body = await c.req.parseBody()
-  const its = str(body.its, 20)
-  const name = str(body.full_name, 100).replace(/\s+/g, ' ')
-  const sectionId = Number(str(body.section_id, 10)) || null
-  const err = await addTeacher(c.env, c.get('user').id, its, name, sectionId, body.role === 'head' ? 'head' : 'teacher')
+  const body = await c.req.parseBody({ all: true })
+  const its = str(one(body, 'its'), 20)
+  const name = str(one(body, 'full_name'), 100).replace(/\s+/g, ' ')
+  const sectionIds = await validSectionIds(c.env, idList(body, 'section_ids'))
+  const err = await addTeacher(c.env, c.get('user').id, its, name, sectionIds, one(body, 'role') === 'head' ? 'head' : 'teacher')
   if (err) return back(c, '/admin/teachers/new', 'err', err)
   return back(c, '/admin/teachers/new', 'ok', `${name} added. Login: ${its} / ${defaultPassword(name, its)}`)
 })
@@ -314,17 +300,18 @@ app.post('/teachers/import', async (c) => {
   const sections = new Map((await listSections(c.env)).map((s) => [s.name.toLowerCase(), s.id]))
   const errors: string[] = []
   let added = 0
-  for (const [its = '', name = '', sectionName = '', role = ''] of rows) {
-    let sectionId: number | null = null
-    if (sectionName) {
-      sectionId = sections.get(sectionName.toLowerCase()) ?? null
+  for (const [its = '', name = '', sectionNames = '', role = ''] of rows) {
+    const sectionIds: number[] = []
+    for (const sectionName of sectionNames.split(/[;|]/).map((s) => s.trim()).filter(Boolean)) {
+      let sectionId = sections.get(sectionName.toLowerCase())
       if (sectionId == null) {
         const res = await c.env.DB.prepare('INSERT INTO sections (name) VALUES (?)').bind(sectionName).run()
         sectionId = Number(res.meta.last_row_id)
         sections.set(sectionName.toLowerCase(), sectionId)
       }
+      sectionIds.push(sectionId)
     }
-    const err = await addTeacher(c.env, c.get('user').id, its, name.replace(/\s+/g, ' '), sectionId, role.toLowerCase() === 'head' ? 'head' : 'teacher')
+    const err = await addTeacher(c.env, c.get('user').id, its, name.replace(/\s+/g, ' '), sectionIds, role.toLowerCase() === 'head' ? 'head' : 'teacher')
     if (err) errors.push(err); else added++
   }
   const msg = `Imported ${added} teacher${added === 1 ? '' : 's'}.` + (errors.length ? ` Skipped ${errors.length}: ${errors.slice(0, 5).join('; ')}${errors.length > 5 ? '…' : ''}` : '')
@@ -335,13 +322,16 @@ app.post('/teachers/:id/access', async (c) => {
   const id = Number(c.req.param('id'))
   const target = await getUserById(c.env, id)
   if (!target || target.role === 'coordinator') return c.notFound()
-  const body = await c.req.parseBody()
+  const raw = await c.req.parseBody({ all: true })
+  const body = Object.fromEntries(Object.keys(raw).map((k) => [k, one(raw, k)]))
   const role = body.role === 'head' ? 'head' : 'teacher'
-  const sectionId = Number(str(body.section_id, 10)) || null
+  const sectionIds = await validSectionIds(c.env, idList(raw, 'section_ids'))
   const scope = role === 'head' && (body.attendance_scope === 'section' || body.attendance_scope === 'all') ? body.attendance_scope : 'none'
   const status = body.status === 'disabled' ? 'disabled' : 'active'
-  await c.env.DB.prepare('UPDATE users SET role = ?, section_id = ?, attendance_scope = ?, status = ? WHERE id = ?')
-    .bind(role, sectionId, scope, status, id).run()
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET role = ?, attendance_scope = ?, status = ? WHERE id = ?').bind(role, scope, status, id),
+    ...setUserSections(c.env, id, sectionIds),
+  ])
   if (status === 'disabled') await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run()
   return back(c, `/teachers/${id}`, 'ok', 'Access updated.')
 })
@@ -362,7 +352,7 @@ app.post('/teachers/:id/profile', async (c) => {
   const id = Number(c.req.param('id'))
   const target = await getUserById(c.env, id)
   if (!target || target.role === 'coordinator') return c.notFound()
-  const body = await c.req.parseBody()
+  const body = await c.req.parseBody({ all: true })
   const errors = await saveProfile(c.env, target, body, 'admin')
   if (errors.length) {
     return page(c, 'Edit profile',
@@ -376,8 +366,8 @@ app.post('/teachers/:id/profile', async (c) => {
 app.get('/sections', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT s.id, s.name,
-            (SELECT COUNT(*) FROM users u WHERE u.section_id = s.id AND u.status = 'active') AS members,
-            (SELECT GROUP_CONCAT(full_name, ', ') FROM users u WHERE u.section_id = s.id AND u.role = 'head' AND u.status = 'active') AS heads
+            (SELECT COUNT(*) FROM user_sections us JOIN users u ON u.id = us.user_id WHERE us.section_id = s.id AND u.status = 'active') AS members,
+            (SELECT GROUP_CONCAT(u.full_name, ', ') FROM user_sections us JOIN users u ON u.id = us.user_id WHERE us.section_id = s.id AND u.role = 'head' AND u.status = 'active') AS heads
        FROM sections s ORDER BY s.name COLLATE NOCASE`,
   ).all<{ id: number; name: string; members: number; heads: string | null }>()
   return page(c, 'Sections',
@@ -405,7 +395,7 @@ app.get('/sections', async (c) => {
                   <td>{s.heads ?? <span class="muted">—</span>}</td>
                   <td class="num"><a href={`/admin/teachers?section=${s.id}`}>{s.members}</a></td>
                   <td>
-                    <form method="post" action={`/admin/sections/${s.id}/delete`} data-confirm={`Delete section "${s.name}"? Its teachers will become unassigned.`}>
+                    <form method="post" action={`/admin/sections/${s.id}/delete`} data-confirm={`Delete section "${s.name}"? Its teachers will be removed from it.`}>
                       <button class="btn btn-sm btn-demerit">Delete</button>
                     </form>
                   </td>
@@ -440,8 +430,9 @@ app.post('/sections/:id', async (c) => {
 app.post('/sections/:id/delete', async (c) => {
   const id = Number(c.req.param('id'))
   await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE users SET section_id = NULL WHERE section_id = ?').bind(id),
-    c.env.DB.prepare('DELETE FROM sections WHERE id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM sections WHERE id = ?').bind(id), // user_sections rows cascade
+    // Re-point the legacy "primary" section at one of the user's remaining sections.
+    c.env.DB.prepare('UPDATE users SET section_id = (SELECT MIN(section_id) FROM user_sections us WHERE us.user_id = users.id) WHERE section_id IS NULL OR section_id = ?').bind(id),
   ])
   return back(c, '/admin/sections', 'ok', 'Section deleted.')
 })

@@ -13,8 +13,10 @@
   --merit-bg: #e3f4ea;
   --demerit: #b3261e;
   --demerit-bg: #fbe5e3;
-  --leave: #a26a00;
+  --leave: #a26a00;          /* CL · Casual Leave */
   --leave-bg: #fff1d6;
+  --eval: #5b3fa0;           /* EA · Evaluation Absent */
+  --eval-bg: #ece6f8;
   --radius: 12px;
   --shadow: 0 1px 2px rgba(20, 30, 50, .06), 0 4px 16px rgba(20, 30, 50, .05);
 }
@@ -182,7 +184,10 @@ label.check input { width: auto; }
 .stats-sm .stat-value { font-size: 22px; }
 .stat-merit .stat-value, .stat-present .stat-value { color: var(--merit); }
 .stat-demerit .stat-value, .stat-absent .stat-value { color: var(--demerit); }
-.stat-leave .stat-value { color: var(--leave); }
+.stat-casual_leave .stat-value { color: var(--leave); }
+.stat-eval_absent .stat-value { color: var(--eval); }
+.stats-att { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 560px) { .stats-att { grid-template-columns: repeat(2, 1fr); } }
 .stat-score { background: var(--navy); border-color: var(--navy); }
 .stat-score .stat-label { color: var(--gold-soft); }
 .stat-score .stat-value { color: #fff; }
@@ -267,7 +272,8 @@ label.check input { width: auto; }
 .chip span { display: inline-flex; width: 40px; height: 36px; align-items: center; justify-content: center; border: 1px solid #cfc7b6; border-radius: 8px; cursor: pointer; font-weight: 700; color: var(--muted); background: #fff; }
 .chip-present input:checked + span { background: var(--merit); border-color: var(--merit); color: #fff; }
 .chip-absent input:checked + span { background: var(--demerit); border-color: var(--demerit); color: #fff; }
-.chip-leave input:checked + span { background: var(--leave); border-color: var(--leave); color: #fff; }
+.chip-casual_leave input:checked + span { background: var(--leave); border-color: var(--leave); color: #fff; }
+.chip-eval_absent input:checked + span { background: var(--eval); border-color: var(--eval); color: #fff; }
 .chip-none input:checked + span { background: #e9e6de; color: var(--ink); }
 .chip input:focus-visible + span { outline: 2px solid var(--gold); }
 .sticky-save { position: sticky; bottom: 0; background: var(--paper); padding: 12px 0 2px; }
@@ -282,11 +288,12 @@ label.check input { width: auto; }
 .cal-status { font-weight: 700; align-self: flex-end; }
 .cal-present { background: var(--merit-bg); border-color: #b8dfc8; color: var(--merit); }
 .cal-absent { background: var(--demerit-bg); border-color: #f0c1bc; color: var(--demerit); }
-.cal-leave { background: var(--leave-bg); border-color: #f0d9a4; color: var(--leave); }
+.cal-casual_leave { background: var(--leave-bg); border-color: #f0d9a4; color: var(--leave); }
+.cal-eval_absent { background: var(--eval-bg); border-color: #d3c7ee; color: var(--eval); }
 .cal-today { outline: 2px solid var(--gold); }
 .legend { display: flex; gap: 16px; margin-top: 10px; font-size: 13px; color: var(--muted); }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
-.dot-present { background: var(--merit); } .dot-absent { background: var(--demerit); } .dot-leave { background: var(--leave); }
+.dot-present { background: var(--merit); } .dot-absent { background: var(--demerit); } .dot-casual_leave { background: var(--leave); } .dot-eval_absent { background: var(--eval); }
 .summary-line { background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--gold); padding: 10px 14px; border-radius: 8px; }
 
 .att-matrix { font-size: 12.5px; }
@@ -297,7 +304,8 @@ label.check input { width: auto; }
 .att-matrix thead .sticky-col { background: #faf8f2; }
 .m-present { background: var(--merit-bg); color: var(--merit); font-weight: 700; }
 .m-absent { background: var(--demerit-bg); color: var(--demerit); font-weight: 700; }
-.m-leave { background: var(--leave-bg); color: var(--leave); font-weight: 700; }
+.m-casual_leave { background: var(--leave-bg); color: var(--leave); font-weight: 700; }
+.m-eval_absent { background: var(--eval-bg); color: var(--eval); font-weight: 700; }
 
 /* ---------- profile ---------- */
 .profile-head { display: flex; gap: 20px; align-items: flex-start; }
@@ -336,3 +344,30 @@ body.bare { background: radial-gradient(circle at top, #2a3c63 0%, #1d2b4a 45%, 
 .onboard-head h1 { color: var(--gold-soft); }
 .onboard-head .muted { color: #c9cfdd; margin: 0; }
 .onboard-head img { width: 64px; height: 64px; border-radius: 50%; background: #fff; padding: 3px; }
+
+/* ---------- multiple sections ---------- */
+.fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 12px; margin: 0; min-width: 0; }
+.fieldset legend { font-weight: 500; font-size: 14px; padding: 0 6px; }
+.check-grid { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.check-grid label.check { font-size: 14px; }
+.approve-form .check-grid { gap: 4px 12px; max-width: 360px; }
+
+/* ---------- attendance codes & leave ---------- */
+.chip span { width: 44px; }
+.code-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 38px; height: 28px; padding: 0 6px; border-radius: 8px; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.code-casual_leave { background: var(--leave-bg); color: var(--leave); }
+.code-eval_absent { background: var(--eval-bg); color: var(--eval); }
+.pill-leave { background: var(--leave-bg); color: var(--leave); margin-left: 6px; text-transform: none; }
+.pill-cancelled { background: #eee; color: #666; }
+.away-list { list-style: none; margin: 0; padding: 0; }
+.away-list li { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.away-list li:last-child { border-bottom: 0; }
+.away-list li.away-now b { color: var(--demerit); }
+.legend { flex-wrap: wrap; }
+.segmented span { font-size: 14px; }
+.segmented input[value=casual_leave]:checked + span { background: var(--leave-bg); border-color: var(--leave); color: var(--leave); }
+.segmented input[value=eval_absent]:checked + span { background: var(--eval-bg); border-color: var(--eval); color: var(--eval); }
+.check-grid input[type=checkbox] { width: auto; min-width: 0; }
+.grid-2 { margin-bottom: 18px; }
+/* Marking sheet: name takes its own line on narrow screens, codes below */
+.att-list li > .who-cell { flex: 1 1 240px; }

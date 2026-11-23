@@ -2,6 +2,21 @@ import type { Env, User } from '../types'
 import type { ProfileMode } from '../views/components'
 import { EMAIL_RE, ITS_RE, isISODate, str } from './util'
 import { randomToken } from './crypto'
+import { setUserSections, validSectionIds } from './queries'
+
+/** Form body as parsed with parseBody({ all: true }): repeated fields (checkboxes) arrive as arrays. */
+export type FormBody = Record<string, string | File | (string | File)[]>
+
+/** First value of a field. */
+export function one(body: FormBody, key: string): string | File | undefined {
+  const v = body[key]
+  return Array.isArray(v) ? v[0] : v
+}
+
+/** All values of a repeated field, as positive integers (e.g. section_ids checkboxes). */
+export function idList(body: FormBody, key: string): number[] {
+  return ([] as unknown[]).concat(body[key] ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0)
+}
 
 const PHOTO_TYPES: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
 // The browser shrinks photos to ~50 KB before upload (public/abn/app.js); this cap
@@ -12,9 +27,11 @@ const MAX_PHOTO = 1024 * 1024
  * Validates a submitted profile form and writes it. Returns a list of errors
  * (empty on success). `mode` decides which fields the submitter may change.
  */
-export async function saveProfile(env: Env, user: User, body: Record<string, string | File>, mode: ProfileMode): Promise<string[]> {
+export async function saveProfile(env: Env, user: User, raw: FormBody, mode: ProfileMode): Promise<string[]> {
   const errors: string[] = []
   const fields: Record<string, string | number | null> = {}
+  const body = Object.fromEntries(Object.keys(raw).map((k) => [k, one(raw, k)]))
+  let sectionIds: number[] | null = null
 
   const phone = str(body.phone, 20)
   const email = str(body.email, 120).toLowerCase()
@@ -29,12 +46,11 @@ export async function saveProfile(env: Env, user: User, body: Record<string, str
   if (mode !== 'self') {
     const fullName = str(body.full_name, 100).replace(/\s+/g, ' ')
     const doj = str(body.date_of_joining, 10)
-    const sectionId = Number(str(body.section_id, 10))
     if (fullName.length < 3) errors.push('Full name is required.')
     if (!isISODate(doj)) errors.push('Enter a valid date of joining.')
-    const section = sectionId ? await env.DB.prepare('SELECT id FROM sections WHERE id = ?').bind(sectionId).first() : null
-    if (!section) errors.push('Choose your section / department.')
-    Object.assign(fields, { full_name: fullName, date_of_joining: doj, section_id: sectionId })
+    sectionIds = await validSectionIds(env, idList(raw, 'section_ids'))
+    if (!sectionIds.length) errors.push('Choose at least one section / department.')
+    Object.assign(fields, { full_name: fullName, date_of_joining: doj })
   }
 
   if (mode === 'admin') {
@@ -68,8 +84,9 @@ export async function saveProfile(env: Env, user: User, body: Record<string, str
   if (mode === 'complete') fields.profile_complete = 1
 
   const cols = Object.keys(fields)
-  await env.DB.prepare(`UPDATE users SET ${cols.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
-    .bind(...cols.map((k) => fields[k]), user.id)
-    .run()
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE users SET ${cols.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).bind(...cols.map((k) => fields[k]), user.id),
+    ...(sectionIds ? setUserSections(env, user.id, sectionIds) : []),
+  ])
   return []
 }

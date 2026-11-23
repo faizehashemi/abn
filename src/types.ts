@@ -19,7 +19,9 @@ export type Env = {
 export type Role = 'coordinator' | 'head' | 'teacher'
 export type UserStatus = 'pending' | 'active' | 'rejected' | 'disabled'
 export type AttendanceScope = 'none' | 'section' | 'all'
-export type AttendanceStatus = 'present' | 'absent' | 'leave'
+export type AttendanceStatus = 'present' | 'absent' | 'casual_leave' | 'eval_absent'
+export type LeaveKind = 'casual_leave' | 'eval_absent'
+export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
 
 export type User = {
   id: number
@@ -29,7 +31,11 @@ export type User = {
   role: Role
   status: UserStatus
   full_name: string
+  /** Legacy "primary" section; use section_ids (from user_sections) for access checks. */
   section_id: number | null
+  /** All sections the user belongs to (hydrated from user_sections). */
+  section_ids: number[]
+  /** Comma-separated names of all the user's sections. */
   section_name?: string | null
   attendance_scope: AttendanceScope
   consent_at: string | null
@@ -63,6 +69,21 @@ export type PointRow = {
   teacher_name?: string
   teacher_its?: string
   requester_name?: string
+  section_name?: string | null
+}
+
+export type LeaveRow = {
+  id: number
+  teacher_id: number
+  kind: LeaveKind
+  start_date: string
+  end_date: string
+  reason: string
+  status: LeaveStatus
+  reviewed_at: string | null
+  review_note: string | null
+  created_at: string
+  teacher_name?: string
   section_name?: string | null
 }
 

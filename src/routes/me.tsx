@@ -1,12 +1,12 @@
 import { Hono } from 'hono'
 import type { AppEnv, PointRow } from '../types'
 import { page, barePage, PageHead, Avatar, Empty } from '../views/layout'
-import { AttendanceCalendar, AttendanceSummary, PointsTable, ProfileForm, ScoreCards, attendanceSentence } from '../views/components'
-import { attendanceCounts, getSetting, listSections, pendingCounts, scoreboard, teacherTotals } from '../lib/queries'
+import { AttendanceCalendar, AttendanceSummary, AwayList, PointsTable, ProfileForm, ScoreCards, attendanceSentence } from '../views/components'
+import { approvedLeaveBetween, attendanceCounts, getSetting, listSections, pendingCounts, scoreboard, teacherTotals } from '../lib/queries'
 import { canViewTeacher, getUserById, attendanceScope } from '../lib/auth'
 import { hashPassword, verifyPassword } from '../lib/crypto'
-import { saveProfile } from '../lib/profile'
-import { back, currentMonth, fmtDate, fmtDateTime, isMonth, monthBounds, todayISO } from '../lib/util'
+import { type FormBody, idList, one, saveProfile } from '../lib/profile'
+import { addDays, back, currentMonth, fmtDate, fmtDateTime, isMonth, monthBounds, todayISO } from '../lib/util'
 
 const app = new Hono<AppEnv>()
 
@@ -72,7 +72,7 @@ app.get('/profile/complete', async (c) => {
 
 app.post('/profile/complete', async (c) => {
   const user = c.get('user')
-  const body = await c.req.parseBody()
+  const body = await c.req.parseBody({ all: true })
   const errors = await saveProfile(c.env, user, body, 'complete')
   if (errors.length) {
     const draft = { ...user, ...pickText(body) }
@@ -83,12 +83,13 @@ app.post('/profile/complete', async (c) => {
 })
 
 /** Keeps the user's typed values when re-rendering a form with errors. */
-export function pickText(body: Record<string, string | File>) {
+export function pickText(body: FormBody) {
   const out: Record<string, any> = {}
   for (const k of ['full_name', 'phone', 'email', 'date_of_joining', 'qualification', 'designation', 'subjects', 'address']) {
-    if (typeof body[k] === 'string') out[k] = body[k]
+    const v = one(body, k)
+    if (typeof v === 'string') out[k] = v
   }
-  if (typeof body.section_id === 'string' && body.section_id) out.section_id = Number(body.section_id)
+  if (body.section_ids !== undefined) out.section_ids = idList(body, 'section_ids')
   return out
 }
 
@@ -125,6 +126,15 @@ app.get('/dashboard', async (c) => {
     </section>
   )
 
+  // Who's away: approved leave from today through the next 7 days.
+  const away = await approvedLeaveBetween(c.env, today, addDays(today, 7))
+  const awayBoard = (
+    <section class="card">
+      <div class="card-head"><h2>On leave · next 7 days</h2><a href="/leave">Leave</a></div>
+      <AwayList rows={away} today={today} empty="Nobody is on approved leave this week." />
+    </section>
+  )
+
   const popup = unreadImportant.length ? (
     <dialog class="modal" id="announcement-modal" open>
       <div class="modal-head">
@@ -152,8 +162,9 @@ app.get('/dashboard', async (c) => {
               (SELECT COUNT(*) FROM sections) AS sections,
               (SELECT COUNT(*) FROM attendance WHERE date = ? AND status = 'present') AS present,
               (SELECT COUNT(*) FROM attendance WHERE date = ? AND status = 'absent') AS absent,
-              (SELECT COUNT(*) FROM attendance WHERE date = ? AND status = 'leave') AS leave`,
-    ).bind(today, today, today).first<any>()
+              (SELECT COUNT(*) FROM attendance WHERE date = ? AND status = 'casual_leave') AS cl,
+              (SELECT COUNT(*) FROM attendance WHERE date = ? AND status = 'eval_absent') AS ea`,
+    ).bind(today, today, today, today).first<any>()
     const board = (await scoreboard(c.env)).slice(0, 5)
     return page(c, 'Dashboard',
       <>
@@ -161,14 +172,18 @@ app.get('/dashboard', async (c) => {
         <div class="stats">
           <a class="stat stat-link" href="/admin/approvals"><span class="stat-label">Joining requests</span><span class="stat-value">{pending.users}</span></a>
           <a class="stat stat-link" href="/admin/approvals#points"><span class="stat-label">Merit/Demerit to approve</span><span class="stat-value">{pending.points}</span></a>
+          <a class="stat stat-link" href="/admin/approvals#leave"><span class="stat-label">Leave to approve</span><span class="stat-value">{pending.leave}</span></a>
           <a class="stat stat-link" href="/admin/teachers"><span class="stat-label">Active teachers</span><span class="stat-value">{stats.teachers}</span></a>
-          <a class="stat stat-link" href="/attendance/mark"><span class="stat-label">Today P / A / L</span><span class="stat-value">{stats.present} / {stats.absent} / {stats.leave}</span></a>
+          <a class="stat stat-link" href="/attendance/mark"><span class="stat-label">Today P / A / CL / EA</span><span class="stat-value">{stats.present} / {stats.absent} / {stats.cl} / {stats.ea}</span></a>
         </div>
         <div class="grid-2">
-          <section class="card">
-            <div class="card-head"><h2>Top of the Leaderboard</h2><a href="/leaderboard">Full leaderboard</a></div>
-            <MiniBoard rows={board} />
-          </section>
+          <div class="stack">
+            {awayBoard}
+            <section class="card">
+              <div class="card-head"><h2>Top of the Leaderboard</h2><a href="/leaderboard">Full leaderboard</a></div>
+              <MiniBoard rows={board} />
+            </section>
+          </div>
           {noticeBoard}
         </div>
       </>,
@@ -184,7 +199,7 @@ app.get('/dashboard', async (c) => {
   let headPanel = null
   if (user.role === 'head') {
     const row = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM points WHERE requested_by = ? AND status = 'pending'`).bind(user.id).first<{ n: number }>()
-    const team = user.section_id != null ? await scoreboard(c.env, user.section_id) : []
+    const team = user.section_ids.length ? await scoreboard(c.env, user.section_ids) : []
     headPanel = (
       <section class="card">
         <div class="card-head"><h2>My Team · {user.section_name ?? 'No section'}</h2><a href="/team">Manage team</a></div>
@@ -205,6 +220,7 @@ app.get('/dashboard', async (c) => {
       <ScoreCards {...totals} rank={me?.rank ?? null} of={board.length} />
       <div class="grid-2">
         <div class="stack">
+          {awayBoard}
           {headPanel}
           <section class="card">
             <div class="card-head"><h2>Attendance · this month</h2><a href="/my/attendance">Calendar</a></div>
@@ -240,7 +256,7 @@ app.get('/leaderboard', async (c) => {
   const sections = await listSections(c.env)
   const sectionParam = c.req.query('section')
   const sectionId = sectionParam ? Number(sectionParam) : null
-  const rows = await scoreboard(c.env, sectionId)
+  const rows = await scoreboard(c.env, sectionId ? [sectionId] : null)
   const podium = sectionId == null ? rows.filter((r) => r.rank <= 3).slice(0, 3) : []
   return page(c, 'Leaderboard',
     <>
@@ -333,7 +349,7 @@ app.get('/my/attendance', async (c) => {
       <AttendanceSummary {...monthCounts} label="this month" />
       <p class="summary-line">{attendanceSentence(records)}</p>
       <section class="card"><AttendanceCalendar month={month} records={records} baseUrl="/my/attendance" today={todayISO(tz)} /></section>
-      <p class="muted">All-time: {allTime.present} present · {allTime.absent} absent · {allTime.leave} leave</p>
+      <p class="muted">All-time: {allTime.present} P · {allTime.absent} A · {allTime.casual_leave} CL · {allTime.eval_absent} EA</p>
     </>,
   )
 })
@@ -403,10 +419,10 @@ app.get('/profile', async (c) => {
 app.post('/profile', async (c) => {
   const user = c.get('user')
   if (user.role === 'coordinator') return c.redirect('/settings', 303)
-  const body = await c.req.parseBody()
+  const body = await c.req.parseBody({ all: true })
   const errors = await saveProfile(c.env, user, body, 'self')
   if (errors.length) {
-    return page(c, 'My Profile', <><PageHead title="My Profile" /><ProfileForm user={{ ...user, ...pickText(body), full_name: user.full_name, section_id: user.section_id }} sections={[]} mode="self" action="/profile" errors={errors} /></>, 400)
+    return page(c, 'My Profile', <><PageHead title="My Profile" /><ProfileForm user={{ ...user, ...pickText(body), full_name: user.full_name, section_ids: user.section_ids }} sections={[]} mode="self" action="/profile" errors={errors} /></>, 400)
   }
   return back(c, '/profile', 'ok', 'Profile updated.')
 })

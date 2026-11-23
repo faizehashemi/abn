@@ -11,7 +11,7 @@ Built on Cloudflare Workers + D1 (SQLite, which also stores photos), using [Hono
 | Role | Can do |
 |---|---|
 | **Main Coordinator** (super admin) | Everything. Approves joining requests and every merit/demerit. Sees all data. Posts announcements. Marks and edits attendance. Creates sections and makes teachers Section Heads. Grants attendance rights. Edits policies. |
-| **Section Head** | Sees only teachers in their own section. Sends merit/demerit requests to the Coordinator for approval. Sees their team's history and attendance. Marks attendance if the Coordinator grants it (own section or all teachers). |
+| **Section Head** | Sees only teachers who share one of their sections. Sends merit/demerit requests to the Coordinator for approval. Sees their team's history and attendance. Marks attendance if the Coordinator grants it (own section or all teachers). |
 | **Teacher** | Their own profile, points, attendance calendar and announcements. Can see the leaderboard. |
 
 ## Workflow
@@ -24,7 +24,14 @@ Built on Cloudflare Workers + D1 (SQLite, which also stores photos), using [Hono
 6. **Merit / Demerit.** A Section Head picks a teacher and submits *+ Merit* or *− Demerit* (points, date, reason). The Coordinator sees "Section Head X wants to give +5 Merit to Teacher Y for …" and approves or rejects it. **Final Score = approved merits − approved demerits.** An entry the Coordinator adds directly is approved immediately. The teacher gets an email when points are approved.
 7. **Leaderboard.** All teachers ranked by Final Score, with a section filter. Teachers see "You got 2 Demerits on 10 Sep 2026 for late coming".
 8. **Announcements.** The Coordinator posts. Important ones appear as a pop-up on every teacher's dashboard until acknowledged, and an email goes to all teachers: *"New Important Update on Portal - Please check"*.
-9. **Attendance.** Mark Present / Absent / Leave for any date (so past days can be edited). The page has *All Present* shortcuts and a CSV bulk upload (`ITS,Date,Status`). The monthly report can be filtered by section and exported to CSV. Teachers see a colour-coded calendar with totals.
+9. **Attendance.** Four codes: **P** Present, **A** Absent, **CL** Casual Leave, **EA** Evaluation Absent. Mark any date (so past days can be edited); CL and EA can also be recorded ahead of time. The page has *All Present* shortcuts and a CSV bulk upload (`ITS,Date,Status` with P / A / CL / EA). The monthly report can be filtered by section and exported to CSV. Teachers see a colour-coded calendar with totals.
+10. **Sections.** A teacher or Section Head can belong to several sections (tick boxes on the join form, profile, approval queue and the teacher's *Account & permissions*; CSV import accepts `Primary;Secondary`). A Section Head manages everyone who shares any of their sections.
+11. **Leave.** Teachers and Section Heads apply under *Leave* for CL or EA over a date range (today onwards, up to 31 days, Sundays not counted), with a reason. The Coordinator approves or rejects it on *Approvals*. Approval:
+    - marks those days CL / EA on the attendance sheet automatically (tagged "approved leave"),
+    - posts an Important announcement (dashboard pop-up + email to all staff) saying who is away and when, so classes can be covered — the private reason is not shared,
+    - shows the teacher on everyone's *On leave · next 7 days* board.
+
+    The Coordinator can cancel approved leave (attendance entries removed, staff told); a teacher can withdraw a pending application.
 
 ---
 

@@ -2,32 +2,45 @@ import { Hono } from 'hono'
 import type { AppEnv, AttendanceStatus, User } from '../types'
 import { page, PageHead, Avatar, Empty } from '../views/layout'
 import { attendanceScope } from '../lib/auth'
-import { listSections } from '../lib/queries'
+import { SECTION_NAMES_SQL, inSections, listSections } from '../lib/queries'
 import {
-  back, csvCell, currentMonth, daysInMonth, fmtDate, fmtMonth, isISODate, isMonth, monthBounds,
+  ATTENDANCE, ATT_CODE, ATT_LABEL, back, csvCell, currentMonth, daysInMonth, fmtDate, fmtMonth, isISODate, isMonth, monthBounds,
   normaliseDate, parseAttendanceStatus, parseCSV, shiftMonth, str, todayISO, weekdayMon0,
 } from '../lib/util'
 
 const app = new Hono<AppEnv>()
 
-type Roster = Pick<User, 'id' | 'its' | 'full_name' | 'photo_key' | 'section_id'> & { section_name: string | null }
+type Roster = Pick<User, 'id' | 'its' | 'full_name' | 'photo_key'> & { section_name: string | null }
+
+/** Days that may be recorded ahead of time (planned absences). */
+const FUTURE_OK: AttendanceStatus[] = ['casual_leave', 'eval_absent']
 
 /** Teachers whose attendance `user` may mark / view, optionally narrowed to one section. */
 async function roster(c: any, user: User, sectionFilter: number | null, forView = false): Promise<Roster[] | null> {
   let scope = attendanceScope(user)
-  // Every section head may *view* their own section's attendance, even without marking rights.
-  if (scope == null && forView && user.role === 'head' && user.section_id != null) scope = user.section_id
+  // Every section head may *view* their own sections' attendance, even without marking rights.
+  if (scope == null && forView && user.role === 'head' && user.section_ids.length) scope = user.section_ids
   if (scope == null) return null
   const where = [`u.status = 'active'`, `u.role != 'coordinator'`]
   const args: unknown[] = []
-  if (scope !== 'all') { where.push('u.section_id = ?'); args.push(scope) }
-  else if (sectionFilter) { where.push('u.section_id = ?'); args.push(sectionFilter) }
+  // A head limited to some sections can still narrow to one of them.
+  const ids = scope === 'all' ? (sectionFilter ? [sectionFilter] : null) : (sectionFilter && scope.includes(sectionFilter) ? [sectionFilter] : scope)
+  if (ids) { const f = inSections(ids); where.push(f.sql); args.push(...f.args) }
   const { results } = await c.env.DB.prepare(
-    `SELECT u.id, u.its, u.full_name, u.photo_key, u.section_id, s.name AS section_name
-       FROM users u LEFT JOIN sections s ON s.id = u.section_id
-      WHERE ${where.join(' AND ')} ORDER BY s.name COLLATE NOCASE, u.full_name COLLATE NOCASE`,
+    `SELECT u.id, u.its, u.full_name, u.photo_key, ${SECTION_NAMES_SQL} AS section_name
+       FROM users u
+      WHERE ${where.join(' AND ')} ORDER BY section_name COLLATE NOCASE, u.full_name COLLATE NOCASE`,
   ).bind(...args).all()
   return results as Roster[]
+}
+
+/** Sections the user can pick in the filter: all for 'all' scope, otherwise their own (when more than one). */
+async function filterSections(c: any, user: User, forView = false) {
+  const scope = attendanceScope(user) ?? (forView && user.role === 'head' ? user.section_ids : null)
+  const all = await listSections(c.env)
+  if (scope === 'all') return all
+  if (!scope || scope.length < 2) return []
+  return all.filter((s) => scope.includes(s.id))
 }
 
 function Tabs(props: { active: 'mark' | 'report' }) {
@@ -49,11 +62,12 @@ app.get('/mark', async (c) => {
   const sectionFilter = Number(c.req.query('section')) || null
   const list = await roster(c, user, sectionFilter)
   if (!list) return c.text('You do not have attendance rights. Ask the Main Coordinator.', 403)
-  const canFilter = attendanceScope(user) === 'all'
-  const sections = canFilter ? await listSections(c.env) : []
+  const sections = await filterSections(c, user)
+  const canFilter = sections.length > 0
 
-  const { results } = await c.env.DB.prepare('SELECT teacher_id, status FROM attendance WHERE date = ?').bind(date).all<{ teacher_id: number; status: string }>()
+  const { results } = await c.env.DB.prepare('SELECT teacher_id, status, leave_id FROM attendance WHERE date = ?').bind(date).all<{ teacher_id: number; status: string; leave_id: number | null }>()
   const existing = new Map(results.map((r) => [r.teacher_id, r.status]))
+  const fromLeave = new Set(results.filter((r) => r.leave_id).map((r) => r.teacher_id))
   const markedHere = list.filter((t) => existing.has(t.id)).length
   const prevDay = new Date(Date.parse(date + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10)
   const nextDay = new Date(Date.parse(date + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10)
@@ -61,7 +75,7 @@ app.get('/mark', async (c) => {
 
   return page(c, 'Attendance',
     <>
-      <PageHead title="Attendance" sub={attendanceScope(user) === 'all' ? 'All teachers' : `Section: ${user.section_name}`} />
+      <PageHead title="Attendance" sub={attendanceScope(user) === 'all' ? 'All teachers' : `Section(s): ${user.section_name}`} />
       <Tabs active="mark" />
       <div class="card">
         <form method="get" class="filters">
@@ -79,7 +93,7 @@ app.get('/mark', async (c) => {
         </form>
         <p class="muted">
           <b>{fmtDate(date)}</b> ({['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][weekdayMon0(date)]}) · {markedHere}/{list.length} marked
-          {date > today ? ' · future date: only Leave can be recorded' : ''}
+          {date > today ? ' · future date: only CL and EA can be recorded' : ''}
         </p>
       </div>
 
@@ -101,13 +115,16 @@ app.get('/mark', async (c) => {
                   <input type="hidden" name="id" value={String(t.id)} />
                   <div class="who-cell grow">
                     <Avatar id={t.id} name={t.full_name} photo={t.photo_key} size={32} />
-                    <span>{t.full_name}<small class="muted"> · {t.its}{canFilter && !sectionFilter ? ` · ${t.section_name ?? '—'}` : ''}</small></span>
+                    <span>
+                      {t.full_name}<small class="muted"> · {t.its}{canFilter && !sectionFilter ? ` · ${t.section_name ?? '—'}` : ''}</small>
+                      {fromLeave.has(t.id) ? <span class="pill pill-leave">approved leave</span> : null}
+                    </span>
                   </div>
                   <div class="att-choice" role="radiogroup">
-                    {([['present', 'P'], ['absent', 'A'], ['leave', 'L'], ['', '–']] as const).map(([v, l]) => (
-                      <label class={`chip chip-${v || 'none'}`} title={v || 'not marked'}>
+                    {[...ATTENDANCE.map((a) => [a.status, a.code, a.label] as const), ['', '–', 'not marked'] as const].map(([v, code, label]) => (
+                      <label class={`chip chip-${v || 'none'}`} title={label}>
                         <input type="radio" name={`s_${t.id}`} value={v} checked={cur === v} />
-                        <span>{l}</span>
+                        <span>{code}</span>
                       </label>
                     ))}
                   </div>
@@ -122,7 +139,7 @@ app.get('/mark', async (c) => {
       <section class="card">
         <h2>Bulk upload (CSV)</h2>
         <p class="muted small">
-          One row per entry: <code>ITS,Date,Status</code> — Date as <code>2026-09-05</code> or <code>05/09/2026</code>, Status as <code>P</code>/<code>A</code>/<code>L</code> (or present/absent/leave).
+          One row per entry: <code>ITS,Date,Status</code> — Date as <code>2026-09-05</code> or <code>05/09/2026</code>, Status as <code>P</code> / <code>A</code> / <code>CL</code> / <code>EA</code> (or Present / Absent / Casual Leave / Evaluation Absent).
           If every row is for the same day you can pick the date below and use <code>ITS,Status</code>. Existing entries are overwritten.
         </p>
         <form method="post" action="/attendance/upload" enctype="multipart/form-data" class="stack">
@@ -130,7 +147,7 @@ app.get('/mark', async (c) => {
             <label>CSV file<input type="file" name="file" accept=".csv,text/csv" /></label>
             <label>Default date (for 2-column rows)<input type="date" name="date" value={date} /></label>
           </div>
-          <label>…or paste rows<textarea name="text" rows={5} placeholder={'30412345,2026-09-05,P\n30498765,2026-09-05,L'}></textarea></label>
+          <label>…or paste rows<textarea name="text" rows={5} placeholder={'30412345,2026-09-05,P\n30498765,2026-09-05,CL\n30411111,2026-09-05,EA'}></textarea></label>
           <button class="btn btn-primary">Upload</button>
         </form>
       </section>
@@ -159,18 +176,18 @@ app.post('/mark', async (c) => {
     } else {
       const status = parseAttendanceStatus(v)
       if (!status) continue
-      if (future && status !== 'leave') { skipped++; continue }
+      if (future && !FUTURE_OK.includes(status)) { skipped++; continue }
       stmts.push(upsert(c, id, date, status, user.id))
     }
   }
   if (stmts.length) await c.env.DB.batch(stmts)
-  return back(c, url, skipped ? 'err' : 'ok', `Attendance saved for ${fmtDate(date)}.${skipped ? ` ${skipped} future Present/Absent entries were ignored.` : ''}`)
+  return back(c, url, skipped ? 'err' : 'ok', `Attendance saved for ${fmtDate(date)}.${skipped ? ` ${skipped} future P/A entries were ignored (only CL and EA can be recorded ahead).` : ''}`)
 })
 
 function upsert(c: any, teacherId: number, date: string, status: AttendanceStatus, by: number): D1PreparedStatement {
   return c.env.DB.prepare(
-    `INSERT INTO attendance (teacher_id, date, status, marked_by, updated_at) VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(teacher_id, date) DO UPDATE SET status = excluded.status, marked_by = excluded.marked_by, updated_at = excluded.updated_at`,
+    `INSERT INTO attendance (teacher_id, date, status, marked_by, leave_id, updated_at) VALUES (?, ?, ?, ?, NULL, datetime('now'))
+     ON CONFLICT(teacher_id, date) DO UPDATE SET status = excluded.status, marked_by = excluded.marked_by, leave_id = NULL, updated_at = excluded.updated_at`,
   ).bind(teacherId, date, status, by)
 }
 
@@ -201,7 +218,7 @@ app.post('/upload', async (c) => {
     if (!id) return errors.push(`row ${line}: ITS ${its} not found in your scope`)
     if (!date) return errors.push(`row ${line}: bad date "${dateRaw}"`)
     if (!status) return errors.push(`row ${line}: bad status "${statusRaw}"`)
-    if (date > today && status !== 'leave') return errors.push(`row ${line}: future date`)
+    if (date > today && !FUTURE_OK.includes(status)) return errors.push(`row ${line}: future date (only CL/EA allowed)`)
     stmts.push(upsert(c, id, date, status, user.id))
   })
   for (let i = 0; i < stmts.length; i += 100) await c.env.DB.batch(stmts.slice(i, i + 100))
@@ -232,8 +249,8 @@ app.get('/report', async (c) => {
   const data = await reportData(c)
   if (!data) return c.text('Forbidden', 403)
   const { user, month, sectionFilter, list, grid, days } = data
-  const canFilter = attendanceScope(user) === 'all'
-  const sections = canFilter ? await listSections(c.env) : []
+  const sections = await filterSections(c, user, true)
+  const canFilter = sections.length > 0
   const dayNums = Array.from({ length: days }, (_, i) => i + 1)
   const q = (m: string) => `/attendance/report?month=${m}${sectionFilter ? `&section=${sectionFilter}` : ''}`
   const count = (rec: Record<string, string>, s: string) => Object.values(rec).filter((v) => v === s).length
@@ -242,6 +259,7 @@ app.get('/report', async (c) => {
     <>
       <PageHead title="Attendance" sub={fmtMonth(month)} actions={<a class="btn btn-sm" href={`/attendance/export?month=${month}${sectionFilter ? `&section=${sectionFilter}` : ''}`}>Export CSV</a>} />
       {attendanceScope(user) != null ? <Tabs active="report" /> : null}
+      <p class="legend">{ATTENDANCE.map((a) => <span><i class={`dot dot-${a.status}`}></i>{a.code} · {a.label}</span>)}</p>
       <form method="get" class="filters card">
         <a class="btn btn-sm" href={q(shiftMonth(month, -1))}>‹</a>
         <input type="month" name="month" value={month} />
@@ -264,7 +282,7 @@ app.get('/report', async (c) => {
                   const wd = weekdayMon0(`${month}-${String(d).padStart(2, '0')}`)
                   return <th class={wd === 6 ? 'sun' : ''}>{d}<small>{'MTWTFSS'[wd]}</small></th>
                 })}
-                <th class="num">P</th><th class="num">A</th><th class="num">L</th>
+                {ATTENDANCE.map((a) => <th class="num" title={a.label}>{a.code}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -275,11 +293,9 @@ app.get('/report', async (c) => {
                     <td class="sticky-col"><a href={`/teachers/${t.id}?month=${month}`}>{t.full_name}</a><small class="muted"> {t.section_name ?? ''}</small></td>
                     {dayNums.map((d) => {
                       const st = rec[`${month}-${String(d).padStart(2, '0')}`]
-                      return <td class={st ? `m-${st}` : ''}>{st ? st[0].toUpperCase() : ''}</td>
+                      return <td class={st ? `m-${st}` : ''} title={st ? ATT_LABEL[st] : undefined}>{st ? ATT_CODE[st] : ''}</td>
                     })}
-                    <td class="num">{count(rec, 'present')}</td>
-                    <td class="num">{count(rec, 'absent')}</td>
-                    <td class="num">{count(rec, 'leave')}</td>
+                    {ATTENDANCE.map((a) => <td class="num">{count(rec, a.status)}</td>)}
                   </tr>
                 )
               })}
@@ -296,12 +312,12 @@ app.get('/export', async (c) => {
   if (!data) return c.text('Forbidden', 403)
   const { month, list, grid, days } = data
   const dates = Array.from({ length: days }, (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`)
-  const lines = [['ITS', 'Name', 'Section', ...dates, 'Present', 'Absent', 'Leave'].join(',')]
+  const lines = [['ITS', 'Name', 'Section', ...dates, ...ATTENDANCE.map((a) => `${a.label} (${a.code})`)].join(',')]
   for (const t of list) {
     const rec = grid.get(t.id) ?? {}
     const vals = Object.values(rec)
-    lines.push([t.its, t.full_name, t.section_name ?? '', ...dates.map((d) => (rec[d] ? rec[d][0].toUpperCase() : '')),
-      vals.filter((v) => v === 'present').length, vals.filter((v) => v === 'absent').length, vals.filter((v) => v === 'leave').length].map(csvCell).join(','))
+    lines.push([t.its, t.full_name, t.section_name ?? '', ...dates.map((d) => (rec[d] ? ATT_CODE[rec[d]] : '')),
+      ...ATTENDANCE.map((a) => vals.filter((v) => v === a.status).length)].map(csvCell).join(','))
   }
   return c.body(lines.join('\r\n'), 200, {
     'Content-Type': 'text/csv; charset=utf-8',

@@ -16,6 +16,7 @@ function navFor(user: User, pending: number): NavItem[] {
       { href: '/admin/approvals', label: 'Approvals', badge: pending },
       { href: '/admin/teachers', label: 'Teachers' },
       { href: '/attendance/mark', label: 'Attendance' },
+      { href: '/leave', label: 'Leave' },
       { href: '/leaderboard', label: 'Leaderboard' },
       { href: '/admin/announcements', label: 'Announcements' },
       { href: '/admin/sections', label: 'Sections' },
@@ -32,6 +33,7 @@ function navFor(user: User, pending: number): NavItem[] {
     { href: '/leaderboard', label: 'Leaderboard' },
     { href: '/my/points', label: 'My Points' },
     { href: '/my/attendance', label: 'My Attendance' },
+    { href: '/leave', label: 'Leave' },
     { href: '/announcements', label: 'Announcements' },
     { href: '/profile', label: 'Profile' },
     { href: '/settings', label: 'Settings' },
@@ -111,7 +113,7 @@ export async function page(c: Context<AppEnv>, title: string, body: Child, statu
   let pending = 0
   if (user?.role === 'coordinator') {
     const p = await pendingCounts(c.env)
-    pending = p.users + p.points
+    pending = p.users + p.points + p.leave
   }
   const flash = takeFlash(c)
   return c.html(

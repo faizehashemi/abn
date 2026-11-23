@@ -101,12 +101,43 @@ export function str(v: unknown, max = 500): string {
   return typeof v === 'string' ? v.trim().slice(0, max) : ''
 }
 
+/** Attendance codes shown everywhere in the UI and in CSV files. */
+export const ATTENDANCE: { status: AttendanceStatus; code: string; label: string }[] = [
+  { status: 'present', code: 'P', label: 'Present' },
+  { status: 'absent', code: 'A', label: 'Absent' },
+  { status: 'casual_leave', code: 'CL', label: 'Casual Leave' },
+  { status: 'eval_absent', code: 'EA', label: 'Evaluation Absent' },
+]
+export const ATT_CODE: Record<string, string> = Object.fromEntries(ATTENDANCE.map((a) => [a.status, a.code]))
+export const ATT_LABEL: Record<string, string> = Object.fromEntries(ATTENDANCE.map((a) => [a.status, a.label]))
+
 export function parseAttendanceStatus(v: string): AttendanceStatus | null {
-  const s = v.trim().toLowerCase()
+  const s = v.trim().toLowerCase().replace(/[\s_-]+/g, ' ')
   if (s === 'p' || s === 'present') return 'present'
   if (s === 'a' || s === 'absent') return 'absent'
-  if (s === 'l' || s === 'leave') return 'leave'
+  // "L" / "leave" kept so older CSV files still import (as Casual Leave).
+  if (s === 'cl' || s === 'casual leave' || s === 'l' || s === 'leave') return 'casual_leave'
+  if (s === 'ea' || s === 'evaluation absent' || s === 'eval absent') return 'eval_absent'
   return null
+}
+
+/** "2026-11-23" + 7 -> "2026-11-30" */
+export function addDays(iso: string, n: number): string {
+  return new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10)
+}
+
+/** Every date from start to end inclusive (YYYY-MM-DD). */
+export function dateRange(start: string, end: string): string[] {
+  const out: string[] = []
+  for (let t = Date.parse(start + 'T00:00:00Z'); t <= Date.parse(end + 'T00:00:00Z'); t += 86400000) {
+    out.push(new Date(t).toISOString().slice(0, 10))
+  }
+  return out
+}
+
+/** Parse "1,4,7" from GROUP_CONCAT into [1, 4, 7]. */
+export function parseIds(csv: string | null | undefined): number[] {
+  return csv ? csv.split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0) : []
 }
 
 /** Minimal CSV parser: handles quoted fields, commas, CRLF. */

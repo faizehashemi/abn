@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { AppEnv, PointRow, User } from '../types'
 import { page, PageHead, Avatar, Empty, StatusPill } from '../views/layout'
-import { AttendanceCalendar, AttendanceSummary, PointsTable, ProfileForm, ScoreCards } from '../views/components'
+import { AttendanceCalendar, AttendanceSummary, PointsTable, ProfileForm, ScoreCards, SectionChecks } from '../views/components'
 import { canGivePoints, canViewTeacher, getUserById, requireRole } from '../lib/auth'
 import { attendanceCounts, listSections, scoreboard, teacherTotals } from '../lib/queries'
 import { back, currentMonth, fmtDate, isISODate, isMonth, monthBounds, str, todayISO } from '../lib/util'
@@ -13,10 +13,10 @@ const app = new Hono<AppEnv>()
 
 app.get('/team', requireRole('head'), async (c) => {
   const user = c.get('user')
-  if (user.section_id == null) {
+  if (!user.section_ids.length) {
     return page(c, 'My Team', <><PageHead title="My Team" /><Empty>You have not been assigned a section yet. Please contact the Main Coordinator.</Empty></>)
   }
-  const rows = await scoreboard(c.env, user.section_id)
+  const rows = await scoreboard(c.env, user.section_ids)
   const { results: requests } = await c.env.DB.prepare(
     `SELECT p.*, t.full_name AS teacher_name FROM points p JOIN users t ON t.id = p.teacher_id
       WHERE p.requested_by = ? ORDER BY p.created_at DESC LIMIT 30`,
@@ -25,7 +25,7 @@ app.get('/team', requireRole('head'), async (c) => {
     <>
       <PageHead title={`My Team · ${user.section_name}`} sub="Select a teacher to view their full record or to add merit / demerit points." />
       <div class="card table-wrap">
-        {rows.length === 0 ? <Empty>No teachers in your section yet.</Empty> : (
+        {rows.length === 0 ? <Empty>No teachers in your section(s) yet.</Empty> : (
           <table class="table">
             <thead><tr><th>Teacher</th><th>ITS</th><th class="num">Merits</th><th class="num">Demerits</th><th class="num">Score</th><th>Rank</th><th></th></tr></thead>
             <tbody>
@@ -153,7 +153,7 @@ app.get('/teachers/:id', async (c) => {
           <h2>Attendance</h2>
           <AttendanceSummary {...monthCounts} label="month" />
           <AttendanceCalendar month={month} records={records} baseUrl={`/teachers/${t.id}`} today={todayISO(tz)} />
-          <p class="muted small">All-time: {allCounts.present} present · {allCounts.absent} absent · {allCounts.leave} leave</p>
+          <p class="muted small">All-time: {allCounts.present} P · {allCounts.absent} A · {allCounts.casual_leave} CL · {allCounts.eval_absent} EA</p>
         </section>
       </div>
 
@@ -173,16 +173,14 @@ app.get('/teachers/:id', async (c) => {
                   <option value="head" selected={t.role === 'head'}>Section Head</option>
                 </select>
               </label>
-              <label>Section
-                <select name="section_id">
-                  <option value="">— None —</option>
-                  {sections.map((s) => <option value={String(s.id)} selected={t.section_id === s.id}>{s.name}</option>)}
-                </select>
-              </label>
+              <fieldset class="span-2 fieldset">
+                <legend>Sections <span class="hint">a teacher can belong to several</span></legend>
+                <SectionChecks sections={sections} selected={t.section_ids} />
+              </fieldset>
               <label>Attendance rights (Section Heads)
                 <select name="attendance_scope">
                   <option value="none" selected={t.attendance_scope === 'none'}>None</option>
-                  <option value="section" selected={t.attendance_scope === 'section'}>Own section</option>
+                  <option value="section" selected={t.attendance_scope === 'section'}>Own section(s)</option>
                   <option value="all" selected={t.attendance_scope === 'all'}>All teachers</option>
                 </select>
               </label>

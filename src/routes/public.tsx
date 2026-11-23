@@ -4,7 +4,9 @@ import { barePage } from '../views/layout'
 import { createSession, currentUser, destroySession } from '../lib/auth'
 import { defaultPassword, hashPassword, verifyPassword } from '../lib/crypto'
 import { ITS_RE, str, flash } from '../lib/util'
-import { listSections } from '../lib/queries'
+import { listSections, setUserSections } from '../lib/queries'
+import { idList, one } from '../lib/profile'
+import { SectionChecks } from '../views/components'
 
 const app = new Hono<AppEnv>()
 
@@ -98,7 +100,7 @@ app.post('/logout', async (c) => {
 
 // ---------- join (registration request) ----------
 
-function JoinForm(props: { sections: { id: number; name: string }[]; values?: Record<string, string>; error?: string }) {
+function JoinForm(props: { sections: { id: number; name: string }[]; values?: { its?: string; full_name?: string; section_ids?: number[] }; error?: string }) {
   const v = props.values ?? {}
   return (
     <AuthCard>
@@ -113,15 +115,12 @@ function JoinForm(props: { sections: { id: number; name: string }[]; values?: Re
           Full Name
           <input name="full_name" required minlength={3} maxlength={100} value={v.full_name ?? ''} placeholder="e.g. M Huzaifa Master" />
         </label>
-        <label>
-          Section / Department
-          <select name="section_id">
-            <option value="">— Select (optional) —</option>
-            {props.sections.map((s) => (
-              <option value={String(s.id)} selected={v.section_id === String(s.id)}>{s.name}</option>
-            ))}
-          </select>
-        </label>
+        {props.sections.length ? (
+          <fieldset class="fieldset">
+            <legend>Section(s) / Department <span class="hint">optional · tick all that apply</span></legend>
+            <SectionChecks sections={props.sections} selected={v.section_ids ?? []} />
+          </fieldset>
+        ) : null}
         <p class="hint">
           Your login ID will be your ITS number and your initial password will be your <b>first name in lowercase</b> (M / Mulla / Shk prefixes are skipped — <i>M Taha Kamlapur</i> → <code>taha</code>).
           You can change it later from Settings.
@@ -139,18 +138,17 @@ app.get('/join', async (c) => {
 })
 
 app.post('/join', async (c) => {
-  const body = await c.req.parseBody()
-  const its = str(body.its, 20)
-  const fullName = str(body.full_name, 100).replace(/\s+/g, ' ')
-  const sectionRaw = str(body.section_id, 10)
-  const sectionId = sectionRaw ? Number(sectionRaw) : null
-  const values = { its, full_name: fullName, section_id: sectionRaw }
+  const body = await c.req.parseBody({ all: true })
+  const its = str(one(body, 'its'), 20)
+  const fullName = str(one(body, 'full_name'), 100).replace(/\s+/g, ' ')
   const sections = await listSections(c.env)
+  const sectionIds = idList(body, 'section_ids')
+  const values = { its, full_name: fullName, section_ids: sectionIds }
 
   const fail = (error: string) => barePage(c, 'Join as Teacher', <JoinForm sections={sections} values={values} error={error} />, 400)
   if (!ITS_RE.test(its)) return fail('ITS number must be exactly 8 digits.')
   if (fullName.length < 3) return fail('Please enter your full name.')
-  if (sectionId != null && !sections.some((s) => s.id === sectionId)) return fail('Please choose a valid section.')
+  if (sectionIds.some((id) => !sections.some((s) => s.id === id))) return fail('Please choose valid sections.')
 
   const existing = await c.env.DB.prepare('SELECT id, status FROM users WHERE its = ?').bind(its).first<{ id: number; status: string }>()
   const hash = await hashPassword(defaultPassword(fullName, its))
@@ -161,13 +159,17 @@ app.post('/join', async (c) => {
         : 'This ITS number is already registered. Please log in.')
     }
     // A previously rejected person may request again.
-    await c.env.DB.prepare(
-      `UPDATE users SET status = 'pending', full_name = ?, section_id = ?, password_hash = ?, using_default_password = 1, created_at = datetime('now') WHERE id = ?`,
-    ).bind(fullName, sectionId, hash, existing.id).run()
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE users SET status = 'pending', full_name = ?, password_hash = ?, using_default_password = 1, created_at = datetime('now') WHERE id = ?`,
+      ).bind(fullName, hash, existing.id),
+      ...setUserSections(c.env, existing.id, sectionIds),
+    ])
   } else {
-    await c.env.DB.prepare(
-      `INSERT INTO users (its, full_name, section_id, password_hash, role, status) VALUES (?, ?, ?, ?, 'teacher', 'pending')`,
-    ).bind(its, fullName, sectionId, hash).run()
+    const res = await c.env.DB.prepare(
+      `INSERT INTO users (its, full_name, password_hash, role, status) VALUES (?, ?, ?, 'teacher', 'pending')`,
+    ).bind(its, fullName, hash).run()
+    await c.env.DB.batch(setUserSections(c.env, Number(res.meta.last_row_id), sectionIds))
   }
 
   return barePage(
