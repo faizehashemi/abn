@@ -8,6 +8,8 @@ import teacherRoutes from './routes/teachers'
 import adminRoutes from './routes/admin'
 import attendanceRoutes from './routes/attendance'
 import leaveRoutes from './routes/leave'
+import iclockRoutes from './routes/iclock'
+import checkinRoutes, { checkinsReport } from './routes/checkin'
 import { page, PageHead } from './views/layout'
 
 const app = new Hono<AppEnv>()
@@ -17,13 +19,17 @@ app.use('*', originCheck)
 
 // Public: login, join, logout
 app.route('/', publicRoutes)
+// Punching machine (ADMS push) — authenticated by approved device serial, not by login.
+app.route('/iclock', iclockRoutes)
 
 // Everything below requires an approved, logged-in user (and completed onboarding).
 app.use('*', requireAuth)
 app.route('/', meRoutes)
 app.route('/', teacherRoutes)
 app.route('/admin', adminRoutes)
+app.route('/attendance/checkins', checkinsReport)
 app.route('/attendance', attendanceRoutes)
+app.route('/checkin', checkinRoutes)
 app.route('/leave', leaveRoutes)
 
 app.notFound((c) => (c.get('user')
@@ -58,6 +64,8 @@ async function handle(request: Request, env: AppEnv['Bindings'], ctx: ExecutionC
   if (!base) return app.fetch(request, env, ctx)
 
   const url = new URL(request.url)
+  // Punching machines always call /iclock/… at the domain root.
+  if (url.pathname.startsWith('/iclock/')) return app.fetch(request, env, ctx)
   if (url.pathname !== base && !url.pathname.startsWith(base + '/')) {
     return Response.redirect(`${url.origin}${base}/`, 302)
   }
@@ -85,6 +93,10 @@ async function handle(request: Request, env: AppEnv['Bindings'], ctx: ExecutionC
 export default {
   fetch: handle,
   async scheduled(_event: ScheduledEvent, env: AppEnv['Bindings']) {
-    await env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(Math.floor(Date.now() / 1000)).run()
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(Math.floor(Date.now() / 1000)),
+      // Selfies are kept 90 days; the check-in record itself stays.
+      env.DB.prepare(`UPDATE checkins SET photo = NULL WHERE photo IS NOT NULL AND date < date('now', '-90 days')`),
+    ])
   },
 }

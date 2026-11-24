@@ -31,6 +31,23 @@ app.get('/', async (c) => {
   return c.redirect(user ? '/dashboard' : '/login', 303)
 })
 
+// ---------- Android app download ----------
+
+// The app is only a full-screen wrapper around this portal; the APK lives in public/abn/app/.
+app.get('/app', (c) => barePage(c, 'Get the app',
+  <AuthCard>
+    <h2 class="auth-title">ABN Portal for Android</h2>
+    <p class="center muted">The same portal, opening full-screen like an app — for self check-in with a selfie after you punch on the machine.</p>
+    <a class="btn btn-primary btn-block" href="/app/abn-portal.apk" download>Download for Android</a>
+    <ol class="steps-list" style="margin-top:16px">
+      <li>Tap <b>Download for Android</b> and open the downloaded file.</li>
+      <li>If asked, allow your browser to <b>install unknown apps</b>, then tap <b>Install</b>.</li>
+      <li>Open <b>ABN Portal</b> and log in with your ITS number.</li>
+      <li>When you use <b>Self check-in</b>, allow <b>Camera</b> and <b>Location</b>.</li>
+    </ol>
+    <div class="auth-alt">On iPhone or a computer? Just use <a href="/login">the website</a>.</div>
+  </AuthCard>))
+
 // ---------- login ----------
 
 function LoginForm(props: { its?: string; error?: string; info?: string }) {

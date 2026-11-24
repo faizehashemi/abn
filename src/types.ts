@@ -39,6 +39,8 @@ export type User = {
   section_name?: string | null
   attendance_scope: AttendanceScope
   head_level: HeadLevel | null
+  /** User ID as enrolled on the biometric punching machine. */
+  device_pin: string | null
   /** Title of a head from their wing, e.g. "Mas'ool Awwal" (hydrated). */
   head_title?: string | null
   consent_at: string | null

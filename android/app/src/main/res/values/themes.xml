@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No action bar, no native chrome: the web page fills the screen. Navy matches the portal header. -->
+    <style name="Theme.ABN" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#1D2B4A</item>
+        <item name="android:navigationBarColor">#1D2B4A</item>
+        <item name="android:windowBackground">@color/splash</item>
+    </style>
+</resources>

@@ -16,16 +16,18 @@ function navFor(user: User, pending: number): NavItem[] {
       { href: '/admin/approvals', label: 'Approvals', badge: pending },
       { href: '/admin/teachers', label: 'Teachers' },
       { href: '/attendance/mark', label: 'Attendance' },
+      { href: '/attendance/checkins', label: 'Check-ins' },
       { href: '/leave', label: 'Leave' },
       { href: '/leaderboard', label: 'Leaderboard' },
       { href: '/admin/announcements', label: 'Announcements' },
       { href: '/admin/sections', label: 'Sections' },
       { href: '/admin/policies', label: 'Policies' },
+      { href: '/admin/devices', label: 'Devices' },
       { href: '/admin/email-log', label: 'Email Log' },
       { href: '/settings', label: 'Settings' },
     ]
   }
-  const items: NavItem[] = [{ href: '/dashboard', label: 'Dashboard' }]
+  const items: NavItem[] = [{ href: '/dashboard', label: 'Dashboard' }, { href: '/checkin', label: 'Self check-in' }]
   if (user.role === 'head') items.push({ href: '/team', label: 'My Team' })
   if (attendanceScope(user) != null) items.push({ href: '/attendance/mark', label: 'Attendance' })
   else if (user.role === 'head') items.push({ href: '/attendance/report', label: 'Team Attendance' })

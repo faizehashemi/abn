@@ -84,6 +84,13 @@ npx wrangler deploy                                 # attaches the raajsoftware.
 
 The sub-path is controlled by `BASE_PATH` (`/abn`) and `APP_URL` in `wrangler.jsonc`. Static files live in `public/abn/`. To move the portal to a different path or its own subdomain, change those two values, rename that folder and update `routes`.
 
+## Punching machine & selfie self check-in
+
+- **X990 (eSSL / ZKTeco) connection.** On the machine: *MENU → Comm. → Cloud Server Setting* — Enable Domain Name ON, Server Address `raajsoftware.com`, Port `80`, Proxy OFF. The machine pushes punches to `/iclock/…` (ADMS protocol). It then appears under **Devices** as *waiting for approval*; punches are only stored once the Principal approves it.
+- **Machine ID.** Each teacher's user number on the machine goes in *Account & permissions → Machine ID* on their page. Punches are linked by it (also retroactively).
+- **Self check-in** (menu item for teachers/heads). Locked until today's punch has arrived; then the front camera opens, the teacher takes a selfie (GPS recorded when allowed) and today's attendance becomes **Present**. The Principal sees punch time, selfie and location under **Check-ins**. Selfies are kept 90 days.
+- **Android app.** `android/` is a thin WebView shell around the portal (see `android/README.md`). The APK is served from `public/abn/app/abn-portal.apk`; the download page is **https://raajsoftware.com/abn/app**.
+
 ## Email
 
 Configure one of these. With neither, emails are only recorded on the admin **Email Log** page, which is handy locally.

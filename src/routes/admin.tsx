@@ -336,6 +336,18 @@ app.post('/teachers/:id/access', async (c) => {
   const sectionIds = await validSectionIds(c.env, idList(raw, 'section_ids'))
   const scope = role === 'head' && (body.attendance_scope === 'section' || body.attendance_scope === 'all') ? body.attendance_scope : 'none'
   const status = body.status === 'disabled' ? 'disabled' : 'active'
+  const pin = str(body.device_pin, 24) || null
+  if (pin && !/^[A-Za-z0-9]+$/.test(pin)) return back(c, `/teachers/${id}`, 'err', 'Machine ID can only contain letters and digits.')
+  if (pin) {
+    const clash = await c.env.DB.prepare('SELECT full_name FROM users WHERE device_pin = ? AND id != ?').bind(pin, id).first<{ full_name: string }>()
+    if (clash) return back(c, `/teachers/${id}`, 'err', `Machine ID ${pin} is already used by ${clash.full_name}.`)
+  }
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET device_pin = ? WHERE id = ?').bind(pin, id),
+    // Re-link punches: drop the old ID's punches from this teacher, attach the new ID's punches.
+    c.env.DB.prepare('UPDATE punches SET user_id = NULL WHERE user_id = ? AND (? IS NULL OR device_pin != ?)').bind(id, pin, pin),
+    ...(pin ? [c.env.DB.prepare('UPDATE punches SET user_id = ? WHERE device_pin = ?').bind(id, pin)] : []),
+  ])
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE users SET role = ?, head_level = ?, attendance_scope = ?, status = ? WHERE id = ?').bind(role, head_level, scope, status, id),
     ...setUserSections(c.env, id, sectionIds),
@@ -368,6 +380,84 @@ app.post('/teachers/:id/profile', async (c) => {
       <><PageHead title={`Edit ${target.full_name}`} /><ProfileForm user={{ ...target, ...pickText(body) }} sections={await listSections(c.env)} mode="admin" action={`/admin/teachers/${id}/profile`} errors={errors} /></>, 400)
   }
   return back(c, `/teachers/${id}`, 'ok', 'Profile updated.')
+})
+
+// ---------- punching machines (ADMS) ----------
+
+app.get('/devices', async (c) => {
+  const tz = c.env.TIMEZONE
+  const { results: devices } = await c.env.DB.prepare('SELECT * FROM devices ORDER BY approved DESC, last_seen DESC').all<any>()
+  const { results: punches } = await c.env.DB.prepare(
+    `SELECT p.*, u.full_name FROM punches p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.id DESC LIMIT 60`,
+  ).all<any>()
+  const unknownPins = [...new Set(punches.filter((p) => !p.user_id).map((p) => p.device_pin))]
+  const host = new URL(c.env.APP_URL).hostname
+  return page(c, 'Devices',
+    <>
+      <PageHead title="Punching machines" sub="Punches from approved machines unlock teachers' selfie check-in for the day." />
+      <div class="grid-2">
+        <section class="card">
+          <h2>Machines</h2>
+          {devices.length === 0 ? <Empty>No machine has connected yet. Follow the setup steps.</Empty> : (
+            <ul class="away-list">
+              {devices.map((d) => (
+                <li>
+                  <div class="grow">
+                    <b>{d.name || d.serial}</b> {d.approved ? <span class="pill pill-approved">approved</span> : <span class="pill pill-pending">waiting for approval</span>}
+                    <div class="muted small">Serial {d.serial} · last contact {fmtDateTime(d.last_seen, tz)}{d.last_ip ? ` · ${d.last_ip}` : ''}</div>
+                  </div>
+                  <form method="post" action={`/admin/devices/${encodeURIComponent(d.serial)}`} class="inline-form">
+                    <input name="name" value={d.name ?? ''} placeholder="Name, e.g. Main gate" maxlength={40} />
+                    <input type="hidden" name="approved" value={d.approved ? '0' : '1'} />
+                    <button class={`btn btn-sm ${d.approved ? 'btn-demerit' : 'btn-merit'}`}>{d.approved ? 'Block' : 'Approve'}</button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section class="card">
+          <h2>Set up the X990</h2>
+          <ol class="steps-list">
+            <li>On the machine press <b>MENU → Comm. → Cloud Server Setting</b> (some models: <i>ADMS</i>).</li>
+            <li>Set <b>Enable Domain Name: ON</b>, <b>Server Address: {host}</b>, <b>Server Port: 80</b>, <b>Enable Proxy: OFF</b>.</li>
+            <li>Make sure the machine is on the school network with internet (Comm. → Ethernet / Wi-Fi).</li>
+            <li>Within a minute it appears on the left as <i>waiting for approval</i> — tap <b>Approve</b>.</li>
+            <li>Open each teacher's page and fill in their <b>Machine ID</b> (the user number they were enrolled with on the X990).</li>
+          </ol>
+          <p class="hint">Punches from machines that are not approved are ignored.</p>
+        </section>
+      </div>
+      <section class="card">
+        <div class="card-head"><h2>Latest punches</h2><a href="/attendance/checkins">Today's check-ins</a></div>
+        {unknownPins.length ? <div class="flash flash-info">Machine IDs not linked to a teacher yet: <b>{unknownPins.join(', ')}</b>. Add them on the teachers' pages.</div> : null}
+        {punches.length === 0 ? <Empty>No punches received yet.</Empty> : (
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Time (machine)</th><th>Machine ID</th><th>Teacher</th><th>Machine</th></tr></thead>
+              <tbody>
+                {punches.map((p) => (
+                  <tr>
+                    <td>{p.punch_time}</td>
+                    <td>{p.device_pin}</td>
+                    <td>{p.full_name ? <a href={`/teachers/${p.user_id}`}>{p.full_name}</a> : <span class="muted">unknown</span>}</td>
+                    <td class="muted small">{p.device_sn}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>,
+  )
+})
+
+app.post('/devices/:sn', async (c) => {
+  const body = await c.req.parseBody()
+  await c.env.DB.prepare('UPDATE devices SET name = ?, approved = ? WHERE serial = ?')
+    .bind(str(body.name, 40) || null, body.approved === '1' ? 1 : 0, c.req.param('sn')).run()
+  return back(c, '/admin/devices', 'ok', body.approved === '1' ? 'Machine approved — its punches will now be recorded.' : 'Machine saved.')
 })
 
 // ---------- principals ----------

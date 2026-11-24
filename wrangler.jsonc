@@ -16,7 +16,9 @@
   // active zone on this Cloudflare account.
   "routes": [
     { "pattern": "raajsoftware.com/abn", "zone_name": "raajsoftware.com" },
-    { "pattern": "raajsoftware.com/abn/*", "zone_name": "raajsoftware.com" }
+    { "pattern": "raajsoftware.com/abn/*", "zone_name": "raajsoftware.com" },
+    // eSSL / ZKTeco X990 punching machine pushes punches here (ADMS protocol, fixed path).
+    { "pattern": "raajsoftware.com/iclock/*", "zone_name": "raajsoftware.com" }
   ],
   "workers_dev": false,
 

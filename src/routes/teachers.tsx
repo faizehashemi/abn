@@ -184,6 +184,9 @@ app.get('/teachers/:id', async (c) => {
                   <option value="all" selected={t.attendance_scope === 'all'}>All teachers</option>
                 </select>
               </label>
+              <label>Machine ID (punching machine)
+                <input name="device_pin" value={t.device_pin ?? ''} maxlength={24} inputmode="numeric" placeholder="User no. on the X990" />
+              </label>
               <label>Account status
                 <select name="status">
                   <option value="active" selected={t.status === 'active'}>Active</option>

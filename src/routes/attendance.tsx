@@ -49,6 +49,7 @@ function Tabs(props: { active: 'mark' | 'report' }) {
     <div class="tabs">
       <a href="/attendance/mark" class={props.active === 'mark' ? 'active' : ''}>Mark / Edit</a>
       <a href="/attendance/report" class={props.active === 'report' ? 'active' : ''}>Monthly Report</a>
+      <a href="/attendance/checkins">Check-ins</a>
     </div>
   )
 }
